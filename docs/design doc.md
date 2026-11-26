@@ -124,12 +124,13 @@ docs/manuscripts/
    - **模式 C（无基准 / Clean-Only 模式）**：当新项目尚无 Git 历史或 `_archive` 基准时，允许 `active_baseline = null`，仅编译 `Clean` 版 PDF，界面清晰提示当前无对比基准。
 
 4. **生成差异、引擎选择与增量编译**：
-   - 执行 `latexdiff --encoding=utf8 --math-markup=coarse old/flat_old.tex new/flat_new.tex`，输出重定向为 `build_diff/diff.tex`。
+   - 优先执行 `latexdiff --encoding=utf8 --math-markup=coarse old/flat_old.tex new/flat_new.tex` 生成 `build_diff/diff.tex`；当宿主环境未安装 `latexdiff`（含 MiKTeX 未安装占位桩）或缺少 Perl 时，自动回退至内置纯 Python 词元级差异生成器（`builtin_tex_diff`），保证零依赖产出可编译的高亮差异稿。
    - 根据配置和源码自动确定编译引擎（稿件覆盖 -> 全局默认引擎 -> `% !TEX program` 魔法注释 -> 检测 `ctex`/`xeCJK`/`fontspec` 选用 `xelatex`，否则 `pdflatex`）与构建配方（`latexmk` 或 `<engine> + bibtex/biber` 多遍编译）。
    - 捕获编译输出与 `.log` 文件，提取 `-file-line-error`（`file.tex:行号: 错误信息`）及 `! ` 关键错误段，通过 SSE 推送至前端错误面板。
 
 5. **Windows 子进程与单队列并发约束**：
    - 所有外部子进程（`git`、`latexdiff`、`latexmk`、`xelatex`、`pdflatex`、`lualatex`、`bibtex`、`biber`）必须传入 `stdin=subprocess.DEVNULL` 与 `creationflags=subprocess.CREATE_NO_WINDOW`，并设置明确超时，杜绝黑框闪烁和挂起。
+   - 针对 MiKTeX 发行版默认注入 `--miktex-disable-installer`（除非用户在配置中显式开启 `miktex_auto_install`），彻底杜绝隐藏窗口下的交互式包安装弹窗阻塞。
    - `CompileCoordinator` 使用**单工作线程 + Latest-Wins 合并队列**：同一时刻最多运行一个编译任务，防止连续触发导致多份 LaTeX 进程竞争沙盒文件。
 
 ### 4.2 独立返修 TodoList 模块 (`todo_manager.py`)
@@ -165,6 +166,7 @@ docs/manuscripts/
     - `engine_only`：仅执行单次/两次 `<engine>` 快速编译（跳过参考文献重编以提速）。
   - `extra_args`（`str`，默认 `""`）：附加编译参数（如 `-shell-escape`、`--synctex=1`）。
   - `compile_timeout`（`int`，默认 `180`）：单次编译超时秒数。
+  - `miktex_auto_install`（`bool`，默认 `false`）：是否允许 MiKTeX 在编译时自动静默安装缺失宏包（默认关闭 `--miktex-disable-installer` 防止无界面阻塞）。
 - **工具链健康检测**：提供 `GET /api/settings/compiler/check`，即时返回 `xelatex`、`pdflatex`、`lualatex`、`latexmk`、`latexdiff`、`bibtex`、`biber`、`perl`、`git` 的解析路径与可用状态。
 
 ## 5. 数据结构与接口定义

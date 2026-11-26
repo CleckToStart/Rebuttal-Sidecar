@@ -19,6 +19,7 @@ DEFAULT_COMPILER_SETTINGS: dict = {
     "recipe": "auto",
     "extra_args": "",
     "compile_timeout": 180,
+    "miktex_auto_install": False,
 }
 
 
@@ -48,6 +49,8 @@ def _normalize_compiler(raw: dict | None) -> dict:
         merged["extra_args"] = str(raw["extra_args"]).strip()
     if "compile_timeout" in raw:
         merged["compile_timeout"] = max(30, min(900, int(raw["compile_timeout"])))
+    if "miktex_auto_install" in raw:
+        merged["miktex_auto_install"] = bool(raw["miktex_auto_install"])
     return merged
 
 
