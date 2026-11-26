@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Rebuttal Sidecar</title>
+  <link rel="stylesheet" href="/styles.css" />
+  <script defer src="/vendor/alpine.min.js"></script>
+  <script type="module" src="/app.js"></script>
+</head>
+<body x-data="sidecarApp()" x-init="init()">
+  <!-- Top Toolbar -->
+  <header class="topbar">
+    <div class="topbar-group">
+      <div class="brand">Rebuttal Sidecar</div>
+      <button class="btn btn-secondary" @click="openWorkspacePicker()" :title="workspace.project_root || '选择科研项目目录'">
+        <span class="ws-label" x-text="workspaceName()"></span>
+        <span class="caret">▾</span>
+      </button>
+
+      <template x-if="workspace.manuscripts.length > 0">
+        <div class="control-inline">
+          <label class="ctrl-label">稿件</label>
+          <select class="select" x-model="activeManuscript" @change="selectManuscript(activeManuscript)">
+            <template x-for="m in workspace.manuscripts" :key="m.name">
+              <option :value="m.name" x-text="m.name"></option>
+            </template>
+          </select>
+        </div>
+      </template>
+
+      <template x-if="activeManuscript">
+        <div class="control-inline">
+          <label class="ctrl-label">对比基准</label>
+          <select class="select select-wide" x-model="selectedBaselineKey" @change="onBaselineChanged()">
+            <option value="">仅 Clean 净版 (无对比)</option>
+            <optgroup label="本地归档 (_archive)" x-show="baselines.archive.length > 0">
+              <template x-for="b in baselines.archive" :key="'archive:' + b.ref">
+                <option :value="'archive:' + b.ref" x-text="b.label"></option>
+              </template>
+            </optgroup>
+            <optgroup label="Git 历史 (Tag / Commit)" x-show="baselines.git.length > 0">
+              <template x-for="b in baselines.git" :key="'git:' + b.ref">
+                <option :value="'git:' + b.ref" x-text="b.label"></option>
+              </template>
+            </optgroup>
+          </select>
+        </div>
+      </template>
+
+      <template x-if="activeManuscript">
+        <div class="control-inline">
+          <label class="ctrl-label">引擎</label>
+          <select class="select" x-model="manuscriptEngine" @change="onEngineChanged()">
+            <option value="auto">Auto</option>
+            <option value="xelatex">XeLaTeX</option>
+            <option value="pdflatex">pdfLaTeX</option>
+            <option value="lualatex">LuaLaTeX</option>
+          </select>
+        </div>
+      </template>
+    </div>
+
+    <div class="topbar-group">
+      <label class="toggle-pill" :class="{ active: settings.auto_compile }" title="默认关闭，避免频繁自动编译占用资源">
+        <input type="checkbox" :checked="settings.auto_compile" @change="toggleAutoCompile($event.target.checked)" />
+        <span x-text="settings.auto_compile ? '自动编译: 开' : '自动编译: 关'"></span>
+      </label>
+
+      <button class="btn btn-secondary" @click="openCompilerModal()">编译器设置</button>
+
+      <span class="status-pill" :class="'status-' + statusBadgeClass()" x-text="statusLabel()"></span>
+
+      <button
+        class="btn btn-primary"
+        :disabled="!activeManuscript || compileStatus.state === 'compiling'"
+        @click="triggerCompile()"
+      >
+        <span x-text="compileStatus.state === 'compiling' ? '编译中...' : '立即编译'"></span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Empty Workspace Landing -->
+  <template x-if="!workspace.project_root">
+    <main class="empty-workspace">
+      <div class="empty-card">
+        <h2>欢迎使用 Rebuttal Sidecar</h2>
+        <p>请选择包含 <code>docs/manuscripts/</code> 的科研项目根目录。软件仅做只读扫描与沙盒化编译，绝不污染原稿目录。</p>
+        <div class="empty-actions">
+          <button class="btn btn-primary" @click="selectFolderNative()">选择项目文件夹</button>
+          <button class="btn btn-secondary" @click="showWorkspaceModal = true">手动输入路径</button>
+        </div>
+        <template x-if="workspace.recent_workspaces.length > 0">
+          <div class="recent-box">
+            <div class="recent-title">最近打开的项目</div>
+            <template x-for="p in workspace.recent_workspaces" :key="p">
+              <button class="recent-item" @click="openWorkspacePath(p)" x-text="p"></button>
+            </template>
+          </div>
+        </template>
+      </div>
+    </main>
+  </template>
+
+  <!-- Main Dual-Pane Workspace -->
+  <template x-if="workspace.project_root">
+    <main class="workspace-split">
+      <!-- Left Pane: Rebuttal TodoList -->
+      <section class="pane pane-left">
+        <div class="pane-header">
+          <div>
+            <h3>审稿意见看板</h3>
+            <span class="sub-stat" x-text="todoProgressText()"></span>
+          </div>
+          <div class="pane-actions">
+            <button class="btn btn-sm btn-secondary" :disabled="!activeManuscript" @click="openExportModal()">导出回复信</button>
+            <button class="btn btn-sm btn-primary" :disabled="!activeManuscript" @click="openTodoModal()">+ 新增意见</button>
+          </div>
+        </div>
+
+        <div class="progress-track">
+          <div class="progress-fill" :style="'width:' + todoProgressPercent() + '%'"></div>
+        </div>
+
+        <div class="filter-bar">
+          <div class="chip-row">
+            <button class="chip" :class="{ active: reviewerFilter === 'ALL' }" @click="reviewerFilter = 'ALL'">全部审稿人</button>
+            <template x-for="rev in reviewers()" :key="rev">
+              <button class="chip" :class="{ active: reviewerFilter === rev }" @click="reviewerFilter = rev" x-text="rev"></button>
+            </template>
+          </div>
+          <select class="select select-sm" x-model="statusFilter">
+            <option value="ALL">全部状态</option>
+            <option value="pending">待修改</option>
+            <option value="agent_done">AI已改待核</option>
+            <option value="verified">已核验</option>
+          </select>
+        </div>
+
+        <div class="todo-list">
+          <template x-if="filteredTodos().length === 0">
+            <div class="empty-hint">暂无匹配的审稿意见，点击右上角「+ 新增意见」或让 AI Agent 更新 <code>.rebuttal_todo.json</code>。</div>
+          </template>
+          <template x-for="item in filteredTodos()" :key="item.id">
+            <article class="todo-card" :class="'card-' + item.status">
+              <div class="card-top">
+                <div class="card-meta">
+                  <span class="id-badge" x-text="item.id"></span>
+                  <span class="rev-tag" x-text="item.reviewer"></span>
+                  <template x-if="item.target_location">
+                    <button
+                      class="loc-tag"
+                      @click="jumpToLocation(item.target_location)"
+                      title="若包含页码（如 Page 5），点击跳转到 PDF 对应页"
+                      x-text="item.target_location"
+                    ></button>
+                  </template>
+                </div>
+                <button class="state-btn" :class="'state-' + item.status" @click="cycleTodoStatus(item)" x-text="statusText(item.status)"></button>
+              </div>
+
+              <div class="card-summary" x-text="item.summary"></div>
+
+              <template x-if="item.response_draft">
+                <div class="card-draft" x-text="item.response_draft"></div>
+              </template>
+
+              <div class="card-footer">
+                <span class="time-text" x-text="formatTime(item.updated_at)"></span>
+                <div class="card-ops">
+                  <button class="link-btn" @click="openTodoModal(item)">编辑</button>
+                  <button class="link-btn danger" @click="deleteTodo(item.id)">删除</button>
+                </div>
+              </div>
+            </article>
+          </template>
+        </div>
+      </section>
+
+      <!-- Right Pane: PDF.js Dual-Mode Viewer -->
+      <section class="pane pane-right">
+        <div class="pane-header">
+          <div class="mode-tabs">
+            <button class="tab-btn" :class="{ active: viewMode === 'diff' }" @click="switchViewMode('diff')">Diff 修订对比</button>
+            <button class="tab-btn" :class="{ active: viewMode === 'clean' }" @click="switchViewMode('clean')">Clean 净版</button>
+            <button class="tab-btn" :class="{ active: viewMode === 'split' }" @click="switchViewMode('split')">双栏对照</button>
+          </div>
+
+          <div class="viewer-controls">
+            <button class="btn btn-sm btn-secondary" @click="stepPage(-1)" :disabled="currentPage <= 1">‹</button>
+            <span class="page-indicator" x-text="totalPages ? (currentPage + ' / ' + totalPages) : '- / -'"></span>
+            <button class="btn btn-sm btn-secondary" @click="stepPage(1)" :disabled="currentPage >= totalPages">›</button>
+            <span class="divider"></span>
+            <button class="btn btn-sm btn-secondary" @click="adjustZoom(-0.15)">-</button>
+            <span class="zoom-indicator" x-text="Math.round(zoomScale * 100) + '%'"></span>
+            <button class="btn btn-sm btn-secondary" @click="adjustZoom(0.15)">+</button>
+            <button class="btn btn-sm btn-secondary" @click="resetZoom()">100%</button>
+          </div>
+        </div>
+
+        <div class="pdf-stage" id="pdf-stage" @scroll.passive="onPdfScroll()">
+          <template x-if="!hasCurrentModePdf()">
+            <div class="pdf-empty">
+              <template x-if="compileStatus.state === 'compiling'">
+                <p>正在沙盒目录编译 PDF，请稍候...</p>
+              </template>
+              <template x-if="compileStatus.state !== 'compiling'">
+                <div>
+                  <p x-text="pdfEmptyMessage()"></p>
+                  <button class="btn btn-primary" :disabled="!activeManuscript" @click="triggerCompile()">立即编译预览</button>
+                </div>
+              </template>
+            </div>
+          </template>
+
+          <div class="pdf-canvas-wrap" x-show="viewMode !== 'split' && hasCurrentModePdf()" id="single-pdf-container"></div>
+          <div class="pdf-split-wrap" x-show="viewMode === 'split' && (compileStatus.has_clean || compileStatus.has_diff)">
+            <div class="split-col">
+              <div class="split-col-title">Clean 净版</div>
+              <div id="split-clean-container"></div>
+            </div>
+            <div class="split-col">
+              <div class="split-col-title">Diff 修订版</div>
+              <div id="split-diff-container"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Collapsible LaTeX Error Drawer -->
+        <div class="error-drawer" x-show="compileStatus.state === 'error' || showErrorDrawer">
+          <div class="error-header" @click="showErrorDrawer = !showErrorDrawer">
+            <span class="error-title" x-text="'编译输出 / 错误诊断 (' + (compileStatus.errors?.length || 0) + ')'"></span>
+            <button class="link-btn" x-text="showErrorDrawer ? '收起' : '展开'"></button>
+          </div>
+          <div class="error-body" x-show="showErrorDrawer">
+            <template x-for="(err, idx) in (compileStatus.errors || [])" :key="idx">
+              <div class="err-item">
+                <strong x-text="(err.file || 'LaTeX') + (err.line ? (':' + err.line) : '')"></strong>
+                <span x-text="err.message"></span>
+              </div>
+            </template>
+            <template x-if="compileStatus.log_tail">
+              <pre class="log-tail" x-text="compileStatus.log_tail"></pre>
+            </template>
+          </div>
+        </div>
+      </section>
+    </main>
+  </template>
+
+  <!-- Compiler Configuration Modal -->
+  <div class="modal-backdrop" x-show="showCompilerModal" @click.self="showCompilerModal = false">
+    <div class="modal modal-lg">
+      <div class="modal-header">
+        <h3>LaTeX 编译器与自动化设置</h3>
+        <button class="link-btn" @click="showCompilerModal = false">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-grid">
+          <div class="form-field form-full">
+            <label>自定义 TeX bin 目录（留空则使用系统 PATH）</label>
+            <div class="input-row">
+              <input type="text" x-model="compilerForm.tex_bin_dir" placeholder="例如 E:\MiKTeX\miktex\bin\x64 或 C:\texlive\2025\bin\windows" />
+              <button class="btn btn-secondary btn-sm" @click="browseCompilerDir('tex_bin_dir')">浏览</button>
+            </div>
+          </div>
+
+          <div class="form-field form-full">
+            <label>自定义 Perl 路径（用于 latexdiff / latexmk，留空自动探测 Git 内置 Perl）</label>
+            <div class="input-row">
+              <input type="text" x-model="compilerForm.perl_path" placeholder="例如 E:\Git\usr\bin\perl.exe" />
+              <button class="btn btn-secondary btn-sm" @click="browseCompilerDir('perl_path')">浏览</button>
+            </div>
+          </div>
+
+          <div class="form-field">
+            <label>全局默认引擎</label>
+            <select x-model="compilerForm.default_engine">
+              <option value="auto">Auto (自动检测 ctex/fontspec)</option>
+              <option value="xelatex">XeLaTeX</option>
+              <option value="pdflatex">pdfLaTeX</option>
+              <option value="lualatex">LuaLaTeX</option>
+            </select>
+          </div>
+
+          <div class="form-field">
+            <label>构建配方 (Recipe)</label>
+            <select x-model="compilerForm.recipe">
+              <option value="auto">Auto (优先 latexmk，否则引擎+文献)</option>
+              <option value="latexmk">latexmk</option>
+              <option value="engine_bibtex">Engine + BibTeX</option>
+              <option value="engine_biber">Engine + Biber</option>
+              <option value="engine_only">仅 Engine 快速编译</option>
+            </select>
+          </div>
+
+          <div class="form-field">
+            <label>附加编译参数 (Extra Args)</label>
+            <input type="text" x-model="compilerForm.extra_args" placeholder="例如 -shell-escape" />
+          </div>
+
+          <div class="form-field">
+            <label>单次编译超时 (秒)</label>
+            <input type="number" min="30" max="900" x-model.number="compilerForm.compile_timeout" />
+          </div>
+
+          <div class="form-field">
+            <label>自动编译防抖延迟 (ms)</label>
+            <input type="number" min="200" max="10000" step="100" x-model.number="compilerForm.debounce_ms" />
+          </div>
+
+          <div class="form-field checkbox-col">
+            <label class="checkbox-label">
+              <input type="checkbox" x-model="compilerForm.auto_compile" />
+              <span>开启文件保存自动编译（默认关闭）</span>
+            </label>
+            <label class="checkbox-label">
+              <input type="checkbox" x-model="compilerForm.miktex_auto_install" />
+              <span>允许 MiKTeX 自动安装缺失宏包</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="toolchain-box">
+          <div class="toolchain-header">
+            <span>工具链状态探测</span>
+            <button class="btn btn-sm btn-secondary" @click="probeToolchain()">重新检测</button>
+          </div>
+          <div class="toolchain-grid">
+            <template x-for="(info, name) in toolchain" :key="name">
+              <div class="tool-row">
+                <span class="tool-dot" :class="info.available ? 'ok' : 'missing'"></span>
+                <strong x-text="name"></strong>
+                <span class="tool-path" x-text="info.note ? (info.note + (info.path ? ' · ' + info.path : '')) : (info.path || '未检测到')"></span>
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" @click="showCompilerModal = false">取消</button>
+        <button class="btn btn-primary" @click="saveCompilerSettings()">保存设置</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Workspace Path Modal -->
+  <div class="modal-backdrop" x-show="showWorkspaceModal" @click.self="showWorkspaceModal = false">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>打开科研工程目录</h3>
+        <button class="link-btn" @click="showWorkspaceModal = false">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-field">
+          <label>工程根目录（含 <code>docs/manuscripts/</code>）</label>
+          <div class="input-row">
+            <input type="text" x-model="workspaceInputPath" placeholder="E:\Research\MyPaper" @keydown.enter="openWorkspacePath(workspaceInputPath)" />
+            <button class="btn btn-secondary btn-sm" @click="selectFolderNative()">系统选择</button>
+          </div>
+        </div>
+        <template x-if="workspace.recent_workspaces.length > 0">
+          <div class="recent-box">
+            <div class="recent-title">最近打开</div>
+            <template x-for="p in workspace.recent_workspaces" :key="p">
+              <button class="recent-item" @click="openWorkspacePath(p)" x-text="p"></button>
+            </template>
+          </div>
+        </template>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" @click="showWorkspaceModal = false">取消</button>
+        <button class="btn btn-primary" @click="openWorkspacePath(workspaceInputPath)">打开</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add / Edit Todo Modal -->
+  <div class="modal-backdrop" x-show="showTodoModal" @click.self="showTodoModal = false">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 x-text="todoForm.isEdit ? '编辑审稿意见' : '新增审稿意见'"></h3>
+        <button class="link-btn" @click="showTodoModal = false">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-grid">
+          <div class="form-field">
+            <label>编号 (留空自动生成)</label>
+            <input type="text" x-model="todoForm.id" :disabled="todoForm.isEdit" placeholder="例如 R1-C1" />
+          </div>
+          <div class="form-field">
+            <label>审稿人</label>
+            <input type="text" x-model="todoForm.reviewer" placeholder="Reviewer #1" />
+          </div>
+          <div class="form-field">
+            <label>目标位置</label>
+            <input type="text" x-model="todoForm.target_location" placeholder="Section 4.3, Page 6" />
+          </div>
+          <div class="form-field">
+            <label>状态</label>
+            <select x-model="todoForm.status">
+              <option value="pending">待修改</option>
+              <option value="agent_done">AI已改待核</option>
+              <option value="verified">已核验</option>
+            </select>
+          </div>
+          <div class="form-field form-full">
+            <label>意见摘要</label>
+            <textarea rows="3" x-model="todoForm.summary" placeholder="描述审稿人要求修改的问题..."></textarea>
+          </div>
+          <div class="form-field form-full">
+            <label>回复草稿 (Response Draft)</label>
+            <textarea rows="4" x-model="todoForm.response_draft" placeholder="We thank the reviewer for this insightful comment..."></textarea>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" @click="showTodoModal = false">取消</button>
+        <button class="btn btn-primary" @click="saveTodo()">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Export Response Letter Modal -->
+  <div class="modal-backdrop" x-show="showExportModal" @click.self="showExportModal = false">
+    <div class="modal modal-lg">
+      <div class="modal-header">
+        <h3>导出点对点回复信 (Response Letter)</h3>
+        <button class="link-btn" @click="showExportModal = false">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="mode-tabs" style="margin-bottom: 10px;">
+          <button class="tab-btn" :class="{ active: exportFormat === 'md' }" @click="loadExport('md')">Markdown</button>
+          <button class="tab-btn" :class="{ active: exportFormat === 'tex' }" @click="loadExport('tex')">LaTeX</button>
+        </div>
+        <textarea class="export-area" rows="16" readonly x-model="exportContent"></textarea>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" @click="copyExport()" x-text="copyFeedback || '复制内容'"></button>
+        <button class="btn btn-primary" @click="downloadExport()">下载文件</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" x-show="toastMessage" x-text="toastMessage"></div>
+</body>
+</html>
