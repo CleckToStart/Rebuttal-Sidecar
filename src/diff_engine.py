@@ -574,7 +574,7 @@ class CompileCoordinator:
 
     def __init__(self, on_event: Callable[[str, dict], None] | None = None) -> None:
         self._on_event = on_event
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._cond = threading.Condition(self._lock)
         self._pending_job: dict | None = None
         self._stopped = False
@@ -586,29 +586,30 @@ class CompileCoordinator:
         if self._on_event:
             self._on_event(event, payload)
 
+    def _default_status(self, manuscript_name: str) -> dict:
+        return {
+            "manuscript": manuscript_name,
+            "state": "idle",
+            "dirty": False,
+            "engine": "",
+            "has_clean": False,
+            "has_diff": False,
+            "clean_pdf": "",
+            "diff_pdf": "",
+            "errors": [],
+            "log_tail": "",
+            "message": "",
+            "compiled_at": "",
+        }
+
     def get_status(self, manuscript_name: str) -> dict:
         with self._lock:
             current = self._statuses.get(manuscript_name)
-            if current:
-                return dict(current)
-            return {
-                "manuscript": manuscript_name,
-                "state": "idle",
-                "dirty": False,
-                "engine": "",
-                "has_clean": False,
-                "has_diff": False,
-                "clean_pdf": "",
-                "diff_pdf": "",
-                "errors": [],
-                "log_tail": "",
-                "message": "",
-                "compiled_at": "",
-            }
+            return dict(current) if current else self._default_status(manuscript_name)
 
     def mark_dirty(self, manuscript_name: str, changed_file: str = "") -> None:
         with self._lock:
-            st = self.get_status(manuscript_name)
+            st = dict(self._statuses.get(manuscript_name) or self._default_status(manuscript_name))
             st["dirty"] = True
             if changed_file:
                 st["message"] = f"Changed: {changed_file}"
@@ -649,7 +650,7 @@ class CompileCoordinator:
                 self._pending_job = None
 
                 name = job["manuscript_name"]
-                prev = self._statuses.get(name, self.get_status(name))
+                prev = dict(self._statuses.get(name) or self._default_status(name))
                 prev.update({"state": "compiling", "errors": [], "message": "Compiling..."})
                 self._statuses[name] = prev
 
@@ -684,7 +685,7 @@ class CompileCoordinator:
                 errors = exc.errors if isinstance(exc, CompileError) else []
                 log_tail = exc.log_tail if isinstance(exc, CompileError) else ""
                 with self._lock:
-                    prev = self._statuses.get(name, self.get_status(name))
+                    prev = dict(self._statuses.get(name) or self._default_status(name))
                     prev.update(
                         {
                             "state": "error",

@@ -1,6 +1,15 @@
-import * as pdfjsLib from "/pdfjs/pdf.min.mjs";
+import Alpine from "/vendor/alpine.esm.min.js";
 
-pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdfjs/pdf.worker.min.mjs";
+let _pdfjsPromise = null;
+async function getPdfJs() {
+  if (!_pdfjsPromise) {
+    _pdfjsPromise = import("/pdfjs/pdf.min.mjs").then((lib) => {
+      lib.GlobalWorkerOptions.workerSrc = "/pdfjs/pdf.worker.min.mjs";
+      return lib;
+    });
+  }
+  return _pdfjsPromise;
+}
 
 const STATUS_CYCLE = ["pending", "agent_done", "verified"];
 
@@ -16,7 +25,7 @@ async function apiJson(url, options = {}) {
   return data;
 }
 
-window.sidecarApp = function sidecarApp() {
+function sidecarApp() {
   return {
     workspace: {
       project_root: "",
@@ -219,6 +228,18 @@ window.sidecarApp = function sidecarApp() {
         if (this.activeManuscript) await this.loadManuscriptState(this.activeManuscript);
       } catch (err) {
         this.showToast(`打开失败: ${err.message}`);
+      }
+    },
+
+    async openDemoWorkspace() {
+      try {
+        const res = await apiJson("/api/workspace/demo", { method: "POST" });
+        this.showWorkspaceModal = false;
+        this.applyWorkspace(res);
+        if (this.activeManuscript) await this.loadManuscriptState(this.activeManuscript);
+        this.showToast("已加载示例返修工程");
+      } catch (err) {
+        this.showToast(`加载示例失败: ${err.message}`);
       }
     },
 
@@ -512,6 +533,7 @@ window.sidecarApp = function sidecarApp() {
 
     async renderPdfInto(url, container, token, updateCounter) {
       try {
+        const pdfjsLib = await getPdfJs();
         const doc = await pdfjsLib.getDocument({ url, isEvalSupported: false }).promise;
         if (token !== this._renderToken) return;
         if (updateCounter) {
@@ -594,4 +616,8 @@ window.sidecarApp = function sidecarApp() {
       await this.renderCurrentView(true);
     },
   };
-};
+}
+
+Alpine.data("sidecarApp", sidecarApp);
+window.Alpine = Alpine;
+Alpine.start();

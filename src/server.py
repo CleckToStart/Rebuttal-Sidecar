@@ -14,6 +14,7 @@ from typing import Callable
 from bottle import Bottle, HTTPResponse, request, response
 
 from config import AppConfig
+from demo_workspace import ensure_demo_workspace
 from diff_engine import CompileCoordinator
 from proc_utils import check_toolchain
 from scanner import WorkspacePaths, list_baselines, resolve_workspace, scan_workspace
@@ -253,6 +254,11 @@ class SidecarApp:
             if not selected:
                 return _json_response({"cancelled": True, **self.get_workspace_payload()})
             return _json_response(self.open_workspace(selected))
+
+        @app.post("/api/workspace/demo")
+        def post_workspace_demo():
+            demo_root = ensure_demo_workspace()
+            return _json_response(self.open_workspace(str(demo_root)))
 
         @app.get("/api/baselines")
         def get_baselines():

@@ -5,10 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Rebuttal Sidecar</title>
   <link rel="stylesheet" href="/styles.css" />
-  <script defer src="/vendor/alpine.min.js"></script>
   <script type="module" src="/app.js"></script>
 </head>
-<body x-data="sidecarApp()" x-init="init()">
+<body x-data="sidecarApp" x-cloak>
   <!-- Top Toolbar -->
   <header class="topbar">
     <div class="topbar-group">
@@ -81,14 +80,21 @@
     </div>
   </header>
 
-  <!-- Empty Workspace Landing -->
-  <template x-if="!workspace.project_root">
+  <!-- Empty / Zero-Manuscript Workspace Landing -->
+  <template x-if="!workspace.project_root || workspace.manuscripts.length === 0">
     <main class="empty-workspace">
       <div class="empty-card">
         <h2>欢迎使用 Rebuttal Sidecar</h2>
-        <p>请选择包含 <code>docs/manuscripts/</code> 的科研项目根目录。软件仅做只读扫描与沙盒化编译，绝不污染原稿目录。</p>
+        <p>请选择包含 <code>docs/manuscripts/</code> 的科研项目根目录，或直接选择包含 <code>main.tex</code> 的论文目录。软件仅做只读扫描与沙盒化编译，绝不污染原稿目录。</p>
+        <template x-if="workspace.project_root && workspace.manuscripts.length === 0">
+          <div class="empty-warn">
+            <div>当前目录未发现可编译的 LaTeX 稿件（需在 <code>docs/manuscripts/*/</code>、直接子目录或当前目录包含 <code>\documentclass</code>）：</div>
+            <code x-text="workspace.project_root"></code>
+          </div>
+        </template>
         <div class="empty-actions">
           <button class="btn btn-primary" @click="selectFolderNative()">选择项目文件夹</button>
+          <button class="btn btn-secondary" @click="openDemoWorkspace()">加载示例返修工程</button>
           <button class="btn btn-secondary" @click="showWorkspaceModal = true">手动输入路径</button>
         </div>
         <template x-if="workspace.recent_workspaces.length > 0">
@@ -104,7 +110,7 @@
   </template>
 
   <!-- Main Dual-Pane Workspace -->
-  <template x-if="workspace.project_root">
+  <template x-if="workspace.project_root && workspace.manuscripts.length > 0">
     <main class="workspace-split">
       <!-- Left Pane: Rebuttal TodoList -->
       <section class="pane pane-left">

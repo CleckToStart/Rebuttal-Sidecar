@@ -75,3 +75,16 @@ def test_list_baselines_returns_git_tags_and_commits(tmp_path: Path) -> None:
     assert "paper/eswa/v1-sub" in tags
     assert len(commits) == 2
     assert "v2 revision" in commits[0]["label"]
+
+
+def test_scan_workspace_accepts_direct_single_paper_folder(tmp_path: Path) -> None:
+    paper = tmp_path / "my_paper"
+    paper.mkdir()
+    (paper / "main.tex").write_text("\\documentclass{article}\n\\begin{document}Single\\end{document}\n", encoding="utf-8")
+    sibling = tmp_path / "unrelated_paper"
+    sibling.mkdir()
+    (sibling / "main.tex").write_text("\\documentclass{article}\n", encoding="utf-8")
+
+    result = scan_workspace(str(paper))
+    assert [m["name"] for m in result["manuscripts"]] == ["my_paper"]
+    assert result["project_root"] == str(paper.resolve())

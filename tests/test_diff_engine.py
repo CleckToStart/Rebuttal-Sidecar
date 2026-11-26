@@ -107,3 +107,26 @@ def test_end_to_end_sandboxed_clean_and_diff_compilation(tmp_path: Path) -> None
     # Ensure host manuscript directory remains completely clean (no .aux/.log/diff.tex)
     assert not (paper / "main.aux").exists()
     assert not (paper / "diff.tex").exists()
+
+
+def test_compile_coordinator_non_deadlocking_enqueue_and_error(tmp_path: Path) -> None:
+    import time
+    from diff_engine import CompileCoordinator
+
+    events: list[str] = []
+    coord = CompileCoordinator(on_event=lambda ev, _: events.append(ev))
+    try:
+        coord.mark_dirty("missing_paper", "main.tex")
+        assert coord.get_status("missing_paper")["dirty"] is True
+
+        ws = resolve_workspace(str(tmp_path))
+        coord.enqueue(ws, "missing_paper", None, "pdflatex", {})
+        for _ in range(20):
+            st = coord.get_status("missing_paper")
+            if st["state"] == "error":
+                break
+            time.sleep(0.05)
+        assert coord.get_status("missing_paper")["state"] == "error"
+        assert "COMPILE_START" in events and "COMPILE_ERROR" in events
+    finally:
+        coord.stop()

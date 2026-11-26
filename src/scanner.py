@@ -16,6 +16,7 @@ class WorkspacePaths:
     project_root: Path
     manuscripts_dir: Path
     git_root: Path | None
+    single_manuscript: Path | None = None
 
 
 def _strip_tex_comment(line: str) -> str:
@@ -60,12 +61,17 @@ def resolve_workspace(path_str: str) -> WorkspacePaths:
         raise FileNotFoundError(f"Workspace directory not found: {target}")
 
     nested = target / "docs" / "manuscripts"
+    single_manuscript: Path | None = None
     if nested.is_dir():
         project_root = target
         manuscripts_dir = nested
     elif target.name == "manuscripts" and target.parent.name == "docs":
         project_root = target.parent.parent
         manuscripts_dir = target
+    elif find_entry_tex(target) is not None:
+        project_root = target
+        manuscripts_dir = target.parent
+        single_manuscript = target
     else:
         project_root = target
         manuscripts_dir = target
@@ -75,6 +81,7 @@ def resolve_workspace(path_str: str) -> WorkspacePaths:
         project_root=project_root,
         manuscripts_dir=manuscripts_dir,
         git_root=git_root,
+        single_manuscript=single_manuscript,
     )
 
 
@@ -116,22 +123,34 @@ def scan_workspace(path_str: str) -> dict:
     """Scan manuscripts_dir for active manuscripts and _archive baselines."""
     ws = resolve_workspace(path_str)
     manuscripts = []
-    for sub in sorted(ws.manuscripts_dir.iterdir(), key=lambda p: p.name.lower()):
-        if not sub.is_dir() or sub.name.startswith((".", "_")):
-            continue
-        if is_git_ignored(sub, ws.git_root):
-            continue
-        entry = find_entry_tex(sub)
-        if not entry:
-            continue
-        manuscripts.append(
-            {
-                "name": sub.name,
-                "path": str(sub),
-                "entry_tex": entry.name,
-                "has_todo": (sub / ".rebuttal_todo.json").is_file(),
-            }
-        )
+    if ws.single_manuscript is not None:
+        entry = find_entry_tex(ws.single_manuscript)
+        if entry:
+            manuscripts.append(
+                {
+                    "name": ws.single_manuscript.name,
+                    "path": str(ws.single_manuscript),
+                    "entry_tex": entry.name,
+                    "has_todo": (ws.single_manuscript / ".rebuttal_todo.json").is_file(),
+                }
+            )
+    else:
+        for sub in sorted(ws.manuscripts_dir.iterdir(), key=lambda p: p.name.lower()):
+            if not sub.is_dir() or sub.name.startswith((".", "_")):
+                continue
+            if is_git_ignored(sub, ws.git_root):
+                continue
+            entry = find_entry_tex(sub)
+            if not entry:
+                continue
+            manuscripts.append(
+                {
+                    "name": sub.name,
+                    "path": str(sub),
+                    "entry_tex": entry.name,
+                    "has_todo": (sub / ".rebuttal_todo.json").is_file(),
+                }
+            )
 
     return {
         "project_root": str(ws.project_root),

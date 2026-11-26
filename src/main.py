@@ -48,9 +48,29 @@ def main(argv: list[str] | None = None) -> int:
     def choose_folder() -> str | None:
         if not window_holder:
             return None
+        win = window_holder[0]
+        initial_dir = app.workspace_info.get("project_root") or str(Path.home())
         folder_mode = getattr(webview, "FOLDER_DIALOG", None) or webview.FileDialog.FOLDER
-        selected = window_holder[0].create_file_dialog(folder_mode)
-        return selected[0] if selected else None
+        result_box: list[str | None] = [None]
+
+        def _open_on_sta() -> None:
+            selected = win.create_file_dialog(folder_mode, directory=initial_dir)
+            result_box[0] = selected[0] if selected else None
+
+        # WinForms IFileDialog requires execution on the GUI STA thread.
+        try:
+            from System import Action
+            from webview.platforms.winforms import BrowserView
+
+            form = BrowserView.instances.get(win.uid)
+            if form is not None and form.InvokeRequired:
+                form.Invoke(Action(_open_on_sta))
+                return result_box[0]
+        except Exception:
+            pass
+
+        _open_on_sta()
+        return result_box[0]
 
     app.folder_dialog_fn = choose_folder
     window = webview.create_window(
@@ -59,6 +79,7 @@ def main(argv: list[str] | None = None) -> int:
         width=1440,
         height=900,
         min_size=(1024, 680),
+        text_select=True,
     )
     window_holder.append(window)
     window.events.closed += app.stop

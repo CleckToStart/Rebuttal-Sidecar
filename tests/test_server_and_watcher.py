@@ -124,3 +124,18 @@ def test_server_settings_todo_crud_and_nonblocking_sse(tmp_path: Path) -> None:
     finally:
         stop_sse.set()
         app.stop()
+
+
+def test_demo_workspace_endpoint(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    cfg = AppConfig(path=tmp_path / "app_config.json")
+    app = SidecarApp(config=cfg)
+    port = app.start(port=0)
+    try:
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/api/workspace/demo", data=b"{}", method="POST")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+        assert payload["active_manuscript"] == "demo_paper"
+        assert len(payload["manuscripts"]) == 1
+    finally:
+        app.stop()

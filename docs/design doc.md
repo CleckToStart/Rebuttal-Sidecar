@@ -243,7 +243,7 @@ docs/manuscripts/
 
 ## 6. Nuitka 转译 C 语言与原生打包方案
 
-为满足“轻量化、启动快、转译为 C 语言打包”的要求，严禁使用 PyInstaller。采用 **Nuitka Standalone + Onefile** 编译管线，并将前端依赖（`web/vendor/alpine.min.js`、`web/pdfjs/pdf.min.mjs`、`web/pdfjs/pdf.worker.min.mjs`）离线内嵌至 `web/` 目录。
+为满足“轻量化、启动快、转译为 C 语言打包”的要求，严禁使用 PyInstaller。采用 **Nuitka Standalone + Onefile** 编译管线，并将前端依赖（`web/vendor/alpine.esm.min.js`、`web/pdfjs/pdf.min.mjs`、`web/pdfjs/pdf.worker.min.mjs`）离线内嵌至 `web/` 目录。
 
 ### 6.1 工程目录布局
 
@@ -255,6 +255,7 @@ rebuttal-sidecar/
 │   ├── config.py           # %APPDATA%/RebuttalSidecar/config.json 原子读写与默认配置
 │   ├── proc_utils.py       # 无黑框子进程封装、Git Perl / 自定义 TeX PATH 装配与探测
 │   ├── scanner.py          # 工作区解析、稿件扫描与 .gitignore / Git 基准查询
+│   ├── demo_workspace.py   # 示例返修工程生成器（支持零配置体验全流程）
 │   ├── diff_engine.py      # 源码展平、Git/归档提取、latexdiff 与可配置沙盒编译队列
 │   ├── todo_manager.py     # .rebuttal_todo.json 原子 CRUD 与回复信导出
 │   ├── watcher.py          # Watchdog 监听（可选自动编译防抖 + Todo 实时同步）
@@ -263,7 +264,7 @@ rebuttal-sidecar/
 │   ├── index.html
 │   ├── styles.css
 │   ├── app.js
-│   ├── vendor/alpine.min.js
+│   ├── vendor/alpine.esm.min.js
 │   └── pdfjs/
 │       ├── pdf.min.mjs
 │       └── pdf.worker.min.mjs
