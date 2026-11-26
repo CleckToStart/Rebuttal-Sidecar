@@ -15,6 +15,7 @@ if ($RegisterContextMenu) {
     $regKey = "HKCU:\Software\Classes\Directory\shell\RebuttalSidecar"
     New-Item -Path $regKey -Force | Out-Null
     Set-ItemProperty -Path $regKey -Name "(Default)" -Value "用 Rebuttal Sidecar 打开"
+    Set-ItemProperty -Path $regKey -Name "Icon" -Value "$ExePath,0"
     New-Item -Path "$regKey\command" -Force | Out-Null
     Set-ItemProperty -Path "$regKey\command" -Name "(Default)" -Value "`"$ExePath`" `"%1`""
     Write-Host "Registered Explorer context menu under HKCU."
@@ -44,9 +45,11 @@ Write-Host "Building RebuttalSidecar.exe with Nuitka ($($compilerArgs[0]))..."
     --onefile `
     @compilerArgs `
     --windows-console-mode=disable `
+    --windows-icon-from-ico=assets/icon.ico `
     --enable-plugin=anti-bloat `
     --include-package-data=webview `
     --include-data-dir=web=web `
+    --include-data-files=assets/icon.ico=assets/icon.ico `
     --nofollow-import-to=pytest,unittest,tkinter,PIL,numpy `
     --output-dir=dist `
     --output-filename=RebuttalSidecar.exe `

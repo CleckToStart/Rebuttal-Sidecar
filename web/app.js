@@ -89,6 +89,13 @@ function sidecarApp() {
     },
     compilerForm: {},
     toolchain: {},
+    compilerTab: "config",
+    discoveredTexDirs: [],
+    texMirrors: {},
+    texLiveForm: { mirror: "tuna", mode: "gui" },
+    texInstallStatus: { state: "idle", action: "", progress: "", logs: [], detected_bin_dir: "", message: "" },
+    isDesktopShell: false,
+    isWindowMaximized: false,
 
     compileStatus: {
       state: "idle",
@@ -149,7 +156,57 @@ function sidecarApp() {
 
     async init() {
       await Promise.all([this.loadSettings(), this.loadWorkspace()]);
+      await this.syncDesktopShellState();
       this.connectSSE();
+    },
+
+    async syncDesktopShellState() {
+      if (this.isDesktopShell && window.pywebview?.api?.get_state) {
+        try {
+          const st = await window.pywebview.api.get_state();
+          this.isWindowMaximized = Boolean(st?.maximized);
+        } catch {
+          // Ignore before bridge initialization completes.
+        }
+      }
+    },
+
+    async minimizeWindow() {
+      await window.pywebview?.api?.minimize?.();
+    },
+
+    async toggleMaximizeWindow() {
+      const res = await window.pywebview?.api?.toggle_maximize?.();
+      if (res && typeof res.maximized === "boolean") {
+        this.isWindowMaximized = res.maximized;
+      }
+    },
+
+    async closeWindow() {
+      await window.pywebview?.api?.close?.();
+    },
+
+    async startWindowResize(edge) {
+      const api = window.pywebview?.api;
+      if (!api?.begin_resize) return;
+      const ok = await api.begin_resize(edge);
+      if (!ok) return;
+      let pending = false;
+      const onMove = () => {
+        if (pending) return;
+        pending = true;
+        requestAnimationFrame(async () => {
+          await api.step_resize();
+          pending = false;
+        });
+      };
+      const onUp = () => {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        api.end_resize();
+      };
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
     },
 
     showToast(msg) {
@@ -197,6 +254,17 @@ function sidecarApp() {
       es.addEventListener("SETTINGS_UPDATED", (e) => {
         const data = JSON.parse(e.data);
         this.settings = data.compiler;
+        if (this.showCompilerModal && data.compiler?.tex_bin_dir && !this.compilerForm.tex_bin_dir) {
+          this.compilerForm.tex_bin_dir = data.compiler.tex_bin_dir;
+        }
+      });
+      es.addEventListener("TEX_INSTALL_STATUS", (e) => {
+        const st = JSON.parse(e.data);
+        this.texInstallStatus = st;
+        if (st.state === "success" && st.detected_bin_dir) {
+          this.compilerForm.tex_bin_dir = st.detected_bin_dir;
+          this.probeToolchain();
+        }
       });
       es.addEventListener("FILES_CHANGED", (e) => {
         const info = JSON.parse(e.data);
@@ -631,6 +699,7 @@ function sidecarApp() {
     async loadSettings() {
       const data = await apiJson("/api/settings");
       this.settings = data.compiler;
+      this.isDesktopShell = Boolean(data.desktop_shell);
     },
 
     async toggleAutoCompile(enabled) {
@@ -642,10 +711,58 @@ function sidecarApp() {
       this.showToast(enabled ? "已开启自动编译" : "已关闭自动编译");
     },
 
-    async openCompilerModal() {
+    async openCompilerModal(tab = "config") {
       this.compilerForm = { ...this.settings };
+      this.compilerTab = tab;
       this.showCompilerModal = true;
+      await Promise.all([this.probeToolchain(), this.scanLocalTex(false)]);
+    },
+
+    async openTexInstallTab() {
+      this.compilerTab = "install";
+      await this.scanLocalTex(false);
+      const st = await apiJson("/api/settings/compiler/install/status");
+      this.texInstallStatus = st;
+    },
+
+    async scanLocalTex(notify = false) {
+      const res = await apiJson("/api/settings/compiler/scan");
+      this.discoveredTexDirs = res.installations || [];
+      this.texMirrors = res.mirrors || {};
+      if (notify) {
+        if (this.discoveredTexDirs.length > 0 && !this.compilerForm.tex_bin_dir) {
+          this.compilerForm.tex_bin_dir = this.discoveredTexDirs[0].bin_dir;
+          await this.probeToolchain();
+        }
+        this.showToast(
+          this.discoveredTexDirs.length > 0
+            ? `发现 ${this.discoveredTexDirs.length} 个本机 TeX 发行版`
+            : "未在本机常见目录发现 MiKTeX / TeX Live，可点击安装标签页一键部署",
+        );
+      }
+    },
+
+    async selectDiscoveredTex(inst) {
+      this.compilerForm.tex_bin_dir = inst.bin_dir;
       await this.probeToolchain();
+      this.showToast(`已填入 ${inst.distro} 路径`);
+    },
+
+    async runTexInstall(action, options = {}) {
+      try {
+        const res = await apiJson("/api/settings/compiler/install", {
+          method: "POST",
+          body: JSON.stringify({ action, options }),
+        });
+        this.texInstallStatus = res;
+      } catch (err) {
+        this.showToast(err.message);
+      }
+    },
+
+    async cancelTexInstall() {
+      const res = await apiJson("/api/settings/compiler/install/cancel", { method: "POST" });
+      this.texInstallStatus = res;
     },
 
     async probeToolchain() {

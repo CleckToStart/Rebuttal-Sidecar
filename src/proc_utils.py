@@ -5,8 +5,14 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import time
 from functools import lru_cache
 from pathlib import Path
+
+if os.name == "nt":
+    import winreg
+else:
+    winreg = None
 
 CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 TOOLCHAIN_BINARIES = (
@@ -37,8 +43,102 @@ def _discover_git_perl_dir() -> str | None:
     return None
 
 
+_AUTO_SCAN_CACHE: tuple[float, list[dict]] | None = None
+
+
+def _read_windows_registry_paths() -> list[str]:
+    if winreg is None:
+        return []
+    found: list[str] = []
+    targets = (
+        (winreg.HKEY_CURRENT_USER, r"Environment"),
+        (winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
+    )
+    for hive, subkey in targets:
+        try:
+            with winreg.OpenKey(hive, subkey) as key:
+                val, _ = winreg.QueryValueEx(key, "Path")
+                for part in str(val).split(os.pathsep):
+                    clean = part.strip().strip('"')
+                    if clean and ("miktex" in clean.lower() or "texlive" in clean.lower()):
+                        found.append(clean)
+        except OSError:
+            continue
+    return found
+
+
+def scan_local_tex_installations(force_refresh: bool = False) -> list[dict]:
+    """Discover local MiKTeX / TeX Live bin directories from registry PATH and standard locations."""
+    global _AUTO_SCAN_CACHE
+    now = time.monotonic()
+    if not force_refresh and _AUTO_SCAN_CACHE is not None and (now - _AUTO_SCAN_CACHE[0]) < 5.0:
+        return _AUTO_SCAN_CACHE[1]
+
+    candidates: list[Path] = [Path(p) for p in _read_windows_registry_paths()]
+
+    local_app = os.environ.get("LOCALAPPDATA")
+    if local_app:
+        candidates.append(Path(local_app) / "Programs" / "MiKTeX" / "miktex" / "bin" / "x64")
+
+    home = Path.home()
+    for base in (home / "texlive",):
+        if base.is_dir():
+            for year_dir in sorted(base.iterdir(), key=lambda p: p.name, reverse=True):
+                candidates.append(year_dir / "bin" / "windows")
+
+    drives = ["C:", "D:", "E:", "F:"] if os.name == "nt" else []
+    for drv in drives:
+        root = Path(f"{drv}\\")
+        if not root.exists():
+            continue
+        candidates.extend(
+            [
+                root / "Program Files" / "MiKTeX" / "miktex" / "bin" / "x64",
+                root / "MiKTeX" / "miktex" / "bin" / "x64",
+                root / "MiKTeX29" / "miktex" / "bin" / "x64",
+            ]
+        )
+        tl_root = root / "texlive"
+        if tl_root.is_dir():
+            for year_dir in sorted(tl_root.iterdir(), key=lambda p: p.name, reverse=True):
+                candidates.append(year_dir / "bin" / "windows")
+
+    if os.name != "nt":
+        for p in ("/usr/bin", "/usr/local/bin", "/Library/TeX/texbin"):
+            candidates.append(Path(p))
+
+    seen: set[str] = set()
+    results: list[dict] = []
+    for cand in candidates:
+        try:
+            resolved = str(cand.resolve())
+        except OSError:
+            continue
+        norm = resolved.lower()
+        if norm in seen or not cand.is_dir():
+            continue
+        has_pdf = bool(shutil.which("pdflatex", path=resolved))
+        has_xe = bool(shutil.which("xelatex", path=resolved))
+        if not (has_pdf or has_xe):
+            continue
+        seen.add(norm)
+        distro = "MiKTeX" if "miktex" in norm else ("TeX Live" if "texlive" in norm else "TeX")
+        results.append(
+            {
+                "distro": distro,
+                "bin_dir": resolved,
+                "has_pdflatex": has_pdf,
+                "has_xelatex": has_xe,
+                "has_latexmk": bool(shutil.which("latexmk", path=resolved)),
+            }
+        )
+
+    _AUTO_SCAN_CACHE = (now, results)
+    return results
+
+
 def build_tex_env(compiler_settings: dict | None = None) -> dict[str, str]:
-    """Build child environment with configured TeX bin dir and Perl fallback."""
+    """Build child environment with configured TeX bin dir, auto-scanned fallback, and Perl fallback."""
     settings = compiler_settings or {}
     env = os.environ.copy()
     path_parts = [p for p in env.get("PATH", "").split(os.pathsep) if p]
@@ -46,6 +146,10 @@ def build_tex_env(compiler_settings: dict | None = None) -> dict[str, str]:
     tex_bin_dir = str(settings.get("tex_bin_dir", "")).strip()
     if tex_bin_dir and Path(tex_bin_dir).is_dir():
         path_parts.insert(0, tex_bin_dir)
+    elif not shutil.which("pdflatex", path=os.pathsep.join(path_parts)):
+        for found in scan_local_tex_installations():
+            path_parts.insert(0, found["bin_dir"])
+            break
 
     perl_path = str(settings.get("perl_path", "")).strip()
     if perl_path:

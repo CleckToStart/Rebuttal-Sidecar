@@ -7,7 +7,7 @@ import urllib.request
 from pathlib import Path
 
 from config import AppConfig
-from proc_utils import run_cmd
+from proc_utils import run_cmd, scan_local_tex_installations
 from server import SidecarApp
 from watcher import ManuscriptWatcher
 
@@ -290,5 +290,42 @@ def test_baselines_all_commits_and_verify_endpoints(tmp_path: Path) -> None:
             .decode("utf-8")
         )
         assert verified["baseline"]["ref"] == "HEAD"
+    finally:
+        app.stop()
+
+
+def test_tex_scan_installer_status_and_favicon_endpoints(tmp_path: Path) -> None:
+    found = scan_local_tex_installations(force_refresh=True)
+    assert isinstance(found, list)
+
+    app = SidecarApp(config=AppConfig(tmp_path / "cfg.json"))
+    port = app.start(port=0)
+    base = f"http://127.0.0.1:{port}"
+    try:
+        settings = json.loads(urllib.request.urlopen(f"{base}/api/settings", timeout=3).read().decode("utf-8"))
+        assert settings["desktop_shell"] is False
+
+        scan_res = json.loads(urllib.request.urlopen(f"{base}/api/settings/compiler/scan", timeout=3).read().decode("utf-8"))
+        assert isinstance(scan_res["installations"], list)
+        assert "tuna" in scan_res["mirrors"]
+
+        inst_st = json.loads(urllib.request.urlopen(f"{base}/api/settings/compiler/install/status", timeout=3).read().decode("utf-8"))
+        assert inst_st["state"] == "idle"
+
+        req = urllib.request.Request(
+            f"{base}/api/settings/compiler/install",
+            data=json.dumps({"action": "invalid_action"}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            urllib.request.urlopen(req, timeout=3)
+            assert False, "Expected HTTP 400 for invalid installer action"
+        except urllib.error.HTTPError as err:
+            assert err.code == 400
+
+        with urllib.request.urlopen(f"{base}/favicon.svg", timeout=3) as resp:
+            assert resp.status == 200
+            assert "image/svg+xml" in resp.headers.get("Content-Type", "")
     finally:
         app.stop()

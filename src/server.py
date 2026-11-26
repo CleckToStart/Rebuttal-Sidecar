@@ -17,8 +17,9 @@ from companion_templates import COMPANION_TEMPLATES, create_companion_file, read
 from config import AppConfig
 from demo_workspace import ensure_demo_workspace
 from diff_engine import CompileCoordinator
-from proc_utils import check_toolchain
+from proc_utils import check_toolchain, scan_local_tex_installations
 from scanner import WorkspacePaths, list_baselines, resolve_workspace, scan_workspace, verify_git_baseline_ref
+from tex_installer import CTAN_MIRRORS, TexInstallerManager
 from todo_manager import TodoManager
 from watcher import ManuscriptWatcher
 
@@ -98,6 +99,10 @@ class SidecarApp:
         self.broker = SSEBroker()
         self.todo_mgr = TodoManager()
         self.coordinator = CompileCoordinator(on_event=self._on_compile_event)
+        self.tex_installer = TexInstallerManager(
+            on_event=self._on_compile_event,
+            on_bin_detected=self._on_tex_bin_detected,
+        )
         self.watcher = ManuscriptWatcher(
             on_auto_compile=self._on_watcher_auto_compile,
             on_source_dirty=self._on_watcher_dirty,
@@ -135,6 +140,12 @@ class SidecarApp:
 
     def _on_compile_event(self, event: str, payload: dict) -> None:
         self.broker.publish(event, payload)
+
+    def _on_tex_bin_detected(self, bin_dir: str) -> None:
+        if not bin_dir or self.config.compiler.get("tex_bin_dir"):
+            return
+        updated = self.config.update_compiler({"tex_bin_dir": bin_dir})
+        self.broker.publish("SETTINGS_UPDATED", {"compiler": updated})
 
     def _on_watcher_dirty(self, manuscript: str, filename: str) -> None:
         self.coordinator.mark_dirty(manuscript, filename)
@@ -424,7 +435,12 @@ class SidecarApp:
 
         @app.get("/api/settings")
         def get_settings():
-            return _json_response({"compiler": self.config.compiler})
+            return _json_response(
+                {
+                    "compiler": self.config.compiler,
+                    "desktop_shell": bool(self.folder_dialog_fn),
+                }
+            )
 
         @app.put("/api/settings")
         def put_settings():
@@ -447,6 +463,40 @@ class SidecarApp:
             if request.query.get("perl_path") is not None:
                 preview["perl_path"] = request.query.get("perl_path", "").strip()
             return _json_response(check_toolchain(preview))
+
+        @app.get("/api/settings/compiler/scan")
+        def get_compiler_scan():
+            return _json_response(
+                {
+                    "installations": scan_local_tex_installations(force_refresh=True),
+                    "mirrors": CTAN_MIRRORS,
+                }
+            )
+
+        @app.get("/api/settings/compiler/install/status")
+        def get_compiler_install_status():
+            return _json_response(self.tex_installer.get_status())
+
+        @app.post("/api/settings/compiler/install")
+        def post_compiler_install():
+            body = request.json or {}
+            action = str(body.get("action", "")).strip()
+            options = body.get("options") if isinstance(body.get("options"), dict) else {}
+            try:
+                status = self.tex_installer.start_action(
+                    action=action,
+                    options=options,
+                    compiler_settings=self.config.compiler,
+                )
+                return _json_response(status, status=202)
+            except ValueError as exc:
+                return _json_response({"error": str(exc)}, status=400)
+            except RuntimeError as exc:
+                return _json_response({"error": str(exc)}, status=409)
+
+        @app.post("/api/settings/compiler/install/cancel")
+        def post_compiler_install_cancel():
+            return _json_response(self.tex_installer.cancel())
 
         @app.post("/api/settings/select-dir")
         def post_select_dir():

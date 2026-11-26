@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rebuttal-sidecar"
-version = "0.1.0"
+version = "1.0.0"
 description = "Lightweight local LaTeX rebuttal companion with sandboxed latexdiff preview and reviewer todo board."
 readme = "README.md"
 requires-python = ">=3.10"

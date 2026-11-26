@@ -4,15 +4,33 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Rebuttal Sidecar</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="stylesheet" href="/styles.css" />
   <script type="module" src="/app.js"></script>
 </head>
-<body x-data="sidecarApp" x-cloak>
+<body x-data="sidecarApp" x-cloak :class="{ 'desktop-frameless': isDesktopShell, 'is-maximized': isWindowMaximized }">
+  <!-- 8-direction edge/corner resize handles for frameless desktop window -->
+  <template x-if="isDesktopShell && !isWindowMaximized">
+    <div class="win-resize-layer">
+      <div class="win-resize win-resize-n" @pointerdown.prevent="startWindowResize('n')"></div>
+      <div class="win-resize win-resize-s" @pointerdown.prevent="startWindowResize('s')"></div>
+      <div class="win-resize win-resize-w" @pointerdown.prevent="startWindowResize('w')"></div>
+      <div class="win-resize win-resize-e" @pointerdown.prevent="startWindowResize('e')"></div>
+      <div class="win-resize win-resize-nw" @pointerdown.prevent="startWindowResize('nw')"></div>
+      <div class="win-resize win-resize-ne" @pointerdown.prevent="startWindowResize('ne')"></div>
+      <div class="win-resize win-resize-sw" @pointerdown.prevent="startWindowResize('sw')"></div>
+      <div class="win-resize win-resize-se" @pointerdown.prevent="startWindowResize('se')"></div>
+    </div>
+  </template>
+  <div class="app-drag-strip" x-show="isDesktopShell" @dblclick="toggleMaximizeWindow()"></div>
   <div class="app-shell">
     <!-- Left Codex-Style Workspace & Project Tree Sidebar -->
     <aside class="sidebar" :class="sidebarExpanded ? 'sidebar-expanded' : 'sidebar-collapsed'">
       <template x-if="!sidebarExpanded">
         <div class="rail-top">
+          <div class="brand-glyph" title="Rebuttal Sidecar">
+            <img src="/favicon.svg" alt="" width="24" height="24" />
+          </div>
           <button class="rail-btn" @click="toggleSidebar(true)" title="展开项目工作区">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
           </button>
@@ -38,6 +56,9 @@
       <template x-if="sidebarExpanded">
         <div style="display:flex;flex-direction:column;gap:10px;height:100%;min-height:0;">
           <div class="sidebar-top-row">
+            <div class="brand-glyph brand-glyph-inline" title="Rebuttal Sidecar">
+              <img src="/favicon.svg" alt="" width="22" height="22" />
+            </div>
             <button class="btn btn-mint btn-sm" style="flex:1;" @click="openImportModal()">+ 导入项目</button>
             <button class="mini-icon-btn" @click="toggleSidebar(false)" title="收起侧边栏">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
@@ -236,11 +257,30 @@
             <span x-text="isCompiling() ? '正在编译...' : '立即编译'"></span>
           </button>
 
-          <button class="icon-pill-btn" @click="openCompilerModal()" title="编译器设置">
+          <button class="icon-pill-btn" @click="openCompilerModal()" title="编译器设置与 TeX 安装">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
           </button>
 
           <button class="btn btn-soft btn-sm" @click="openHelpModal()" title="帮助与 AI 目录/文档提示词">帮助</button>
+
+          <template x-if="isDesktopShell">
+            <div class="win-controls no-drag">
+              <button class="win-ctrl-btn" @click="minimizeWindow()" title="最小化">
+                <svg width="12" height="12" viewBox="0 0 12 12"><line x1="2" y1="6" x2="10" y2="6" stroke="currentColor" stroke-width="1.3"/></svg>
+              </button>
+              <button class="win-ctrl-btn" @click="toggleMaximizeWindow()" :title="isWindowMaximized ? '向下还原' : '最大化'">
+                <template x-if="!isWindowMaximized">
+                  <svg width="11" height="11" viewBox="0 0 12 12"><rect x="2" y="2" width="8" height="8" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>
+                </template>
+                <template x-if="isWindowMaximized">
+                  <svg width="11" height="11" viewBox="0 0 12 12"><rect x="1.8" y="3.5" width="6.5" height="6.5" rx="1" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M4 3.5V2.2a.7.7 0 0 1 .7-.7h5.1a.7.7 0 0 1 .7.7v5.1a.7.7 0 0 1-.7.7H8.5" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
+                </template>
+              </button>
+              <button class="win-ctrl-btn win-ctrl-close" @click="closeWindow()" title="关闭">
+                <svg width="12" height="12" viewBox="0 0 12 12"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7" stroke="currentColor" stroke-width="1.35" stroke-linecap="round"/></svg>
+              </button>
+            </div>
+          </template>
         </div>
       </header>
 
@@ -679,98 +719,184 @@
     </div>
   </div>
 
-  <!-- Compiler Configuration Modal -->
+  <!-- Compiler & TeX Installer Modal -->
   <div class="modal-backdrop" x-show="showCompilerModal" @click.self="showCompilerModal = false">
     <div class="modal modal-lg">
       <div class="modal-header">
-        <h3>LaTeX 编译器与自动化设置</h3>
+        <h3>LaTeX 编译器配置与发行版安装</h3>
         <button class="link-btn" @click="showCompilerModal = false">✕</button>
       </div>
       <div class="modal-body">
-        <div class="form-grid">
-          <div class="form-field form-full">
-            <label>自定义 TeX bin 目录（留空则使用系统 PATH）</label>
-            <div class="input-row">
-              <input type="text" x-model="compilerForm.tex_bin_dir" placeholder="例如 E:\MiKTeX\miktex\bin\x64 或 C:\texlive\2025\bin\windows" />
-              <button class="btn btn-soft btn-sm" @click="browseCompilerDir('tex_bin_dir')">浏览</button>
-            </div>
-          </div>
-
-          <div class="form-field form-full">
-            <label>自定义 Perl 路径（用于 latexdiff / latexmk，留空自动探测 Git 内置 Perl）</label>
-            <div class="input-row">
-              <input type="text" x-model="compilerForm.perl_path" placeholder="例如 E:\Git\usr\bin\perl.exe" />
-              <button class="btn btn-soft btn-sm" @click="browseCompilerDir('perl_path')">浏览</button>
-            </div>
-          </div>
-
-          <div class="form-field">
-            <label>全局默认引擎</label>
-            <select x-model="compilerForm.default_engine">
-              <option value="auto">Auto (自动检测 ctex/fontspec)</option>
-              <option value="xelatex">XeLaTeX</option>
-              <option value="pdflatex">pdfLaTeX</option>
-              <option value="lualatex">LuaLaTeX</option>
-            </select>
-          </div>
-
-          <div class="form-field">
-            <label>构建配方 (Recipe)</label>
-            <select x-model="compilerForm.recipe">
-              <option value="auto">Auto (优先 latexmk，否则引擎+文献)</option>
-              <option value="latexmk">latexmk</option>
-              <option value="engine_bibtex">Engine + BibTeX</option>
-              <option value="engine_biber">Engine + Biber</option>
-              <option value="engine_only">仅 Engine 快速编译</option>
-            </select>
-          </div>
-
-          <div class="form-field">
-            <label>附加编译参数 (Extra Args)</label>
-            <input type="text" x-model="compilerForm.extra_args" placeholder="例如 -shell-escape" />
-          </div>
-
-          <div class="form-field">
-            <label>单次编译超时 (秒)</label>
-            <input type="number" min="30" max="900" x-model.number="compilerForm.compile_timeout" />
-          </div>
-
-          <div class="form-field">
-            <label>自动编译防抖延迟 (ms)</label>
-            <input type="number" min="200" max="10000" step="100" x-model.number="compilerForm.debounce_ms" />
-          </div>
-
-          <div class="form-field checkbox-col">
-            <label class="checkbox-label">
-              <input type="checkbox" x-model="compilerForm.auto_compile" />
-              <span>开启文件保存自动编译（默认关闭）</span>
-            </label>
-            <label class="checkbox-label">
-              <input type="checkbox" x-model="compilerForm.miktex_auto_install" />
-              <span>允许 MiKTeX 自动安装缺失宏包</span>
-            </label>
-          </div>
+        <div class="segmented-capsule" style="margin-bottom: 12px;">
+          <button class="seg-btn" :class="{ active: compilerTab === 'config' }" @click="compilerTab = 'config'">编译器与路径配置</button>
+          <button class="seg-btn" :class="{ active: compilerTab === 'install' }" @click="openTexInstallTab()">内置安装 MiKTeX / TeX Live</button>
         </div>
 
-        <div class="toolchain-box">
-          <div class="toolchain-header">
-            <span>工具链状态探测</span>
-            <button class="btn btn-sm btn-soft" @click="probeToolchain()">重新检测</button>
-          </div>
-          <div class="toolchain-grid">
-            <template x-for="(info, name) in toolchain" :key="name">
-              <div class="tool-row">
-                <span class="tool-dot" :class="info.available ? 'ok' : 'missing'"></span>
-                <strong x-text="name"></strong>
-                <span class="tool-path" x-text="info.note ? (info.note + (info.path ? ' · ' + info.path : '')) : (info.path || '未检测到')"></span>
+        <template x-if="compilerTab === 'config'">
+          <div>
+            <div class="form-grid">
+              <div class="form-field form-full">
+                <label>自定义 TeX bin 目录（留空自动探测系统 PATH 与本机安装路径）</label>
+                <div class="input-row">
+                  <input type="text" x-model="compilerForm.tex_bin_dir" placeholder="例如 E:\MiKTeX\miktex\bin\x64 或 C:\texlive\2025\bin\windows" />
+                  <button class="btn btn-soft btn-sm" @click="scanLocalTex(true)">自动扫描</button>
+                  <button class="btn btn-soft btn-sm" @click="browseCompilerDir('tex_bin_dir')">浏览</button>
+                </div>
+                <template x-if="discoveredTexDirs.length > 0">
+                  <div class="chip-row" style="margin-top:4px;">
+                    <template x-for="inst in discoveredTexDirs" :key="inst.bin_dir">
+                      <button
+                        type="button"
+                        class="chip"
+                        :class="{ active: compilerForm.tex_bin_dir === inst.bin_dir }"
+                        @click="selectDiscoveredTex(inst)"
+                        x-text="inst.distro + ': ' + inst.bin_dir"
+                      ></button>
+                    </template>
+                  </div>
+                </template>
               </div>
-            </template>
+
+              <div class="form-field form-full">
+                <label>自定义 Perl 路径（用于 latexdiff / latexmk，留空自动探测 Git 内置 Perl）</label>
+                <div class="input-row">
+                  <input type="text" x-model="compilerForm.perl_path" placeholder="例如 E:\Git\usr\bin\perl.exe" />
+                  <button class="btn btn-soft btn-sm" @click="browseCompilerDir('perl_path')">浏览</button>
+                </div>
+              </div>
+
+              <div class="form-field">
+                <label>全局默认引擎</label>
+                <select x-model="compilerForm.default_engine">
+                  <option value="auto">Auto (自动检测 ctex/fontspec)</option>
+                  <option value="xelatex">XeLaTeX</option>
+                  <option value="pdflatex">pdfLaTeX</option>
+                  <option value="lualatex">LuaLaTeX</option>
+                </select>
+              </div>
+
+              <div class="form-field">
+                <label>构建配方 (Recipe)</label>
+                <select x-model="compilerForm.recipe">
+                  <option value="auto">Auto (优先 latexmk，否则引擎+文献)</option>
+                  <option value="latexmk">latexmk</option>
+                  <option value="engine_bibtex">Engine + BibTeX</option>
+                  <option value="engine_biber">Engine + Biber</option>
+                  <option value="engine_only">仅 Engine 快速编译</option>
+                </select>
+              </div>
+
+              <div class="form-field">
+                <label>附加编译参数 (Extra Args)</label>
+                <input type="text" x-model="compilerForm.extra_args" placeholder="例如 -shell-escape" />
+              </div>
+
+              <div class="form-field">
+                <label>单次编译超时 (秒)</label>
+                <input type="number" min="30" max="900" x-model.number="compilerForm.compile_timeout" />
+              </div>
+
+              <div class="form-field">
+                <label>自动编译防抖延迟 (ms)</label>
+                <input type="number" min="200" max="10000" step="100" x-model.number="compilerForm.debounce_ms" />
+              </div>
+
+              <div class="form-field checkbox-col">
+                <label class="checkbox-label">
+                  <input type="checkbox" x-model="compilerForm.auto_compile" />
+                  <span>开启文件保存自动编译（默认关闭）</span>
+                </label>
+                <label class="checkbox-label">
+                  <input type="checkbox" x-model="compilerForm.miktex_auto_install" />
+                  <span>允许 MiKTeX 自动安装缺失宏包</span>
+                </label>
+              </div>
+            </div>
+
+            <div class="toolchain-box">
+              <div class="toolchain-header">
+                <span>工具链状态探测</span>
+                <button class="btn btn-sm btn-soft" @click="probeToolchain()">重新检测</button>
+              </div>
+              <div class="toolchain-grid">
+                <template x-for="(info, name) in toolchain" :key="name">
+                  <div class="tool-row">
+                    <span class="tool-dot" :class="info.available ? 'ok' : 'missing'"></span>
+                    <strong x-text="name"></strong>
+                    <span class="tool-path" x-text="info.note ? (info.note + (info.path ? ' · ' + info.path : '')) : (info.path || '未检测到')"></span>
+                  </div>
+                </template>
+              </div>
+            </div>
           </div>
-        </div>
+        </template>
+
+        <template x-if="compilerTab === 'install'">
+          <div class="installer-stack">
+            <div class="installer-card">
+              <div class="installer-head">
+                <div>
+                  <strong>MiKTeX（轻量按需下载 · 推荐快速上手）</strong>
+                  <div class="installer-desc">通过 Windows winget 一键部署 MiKTeX，并可预装返修 Diff 与顶会/期刊常用宏包。</div>
+                </div>
+                <div class="installer-actions">
+                  <button class="btn btn-mint btn-sm" :disabled="texInstallStatus.state === 'running'" @click="runTexInstall('install_miktex')">一键安装 MiKTeX</button>
+                  <button class="btn btn-soft btn-sm" :disabled="texInstallStatus.state === 'running'" @click="runTexInstall('install_miktex_packages')">补全返修常用宏包</button>
+                </div>
+              </div>
+              <div class="installer-tags">包含: latexmk · latexdiff · ulem · xcolor · epstopdf-pkg · grfext · booktabs · cite · IEEEtran · elsarticle</div>
+            </div>
+
+            <div class="installer-card">
+              <div class="installer-head">
+                <div>
+                  <strong>TeX Live（完整学术发行版 · 内置国内高速镜像）</strong>
+                  <div class="installer-desc">从选定的 CTAN 镜像下载官方安装器，支持打开图形安装向导或全自动静默安装（scheme-medium）。</div>
+                </div>
+              </div>
+              <div class="form-grid" style="margin-top:8px;">
+                <div class="form-field">
+                  <label>CTAN 下载镜像源</label>
+                  <select x-model="texLiveForm.mirror">
+                    <template x-for="(m, key) in texMirrors" :key="key">
+                      <option :value="key" x-text="m.label"></option>
+                    </template>
+                  </select>
+                </div>
+                <div class="form-field">
+                  <label>安装模式</label>
+                  <select x-model="texLiveForm.mode">
+                    <option value="gui">启动官方图形安装向导（推荐）</option>
+                    <option value="unattended">后台自动安装中等方案 (scheme-medium)</option>
+                  </select>
+                </div>
+              </div>
+              <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px;">
+                <button class="btn btn-soft btn-sm" @click="scanLocalTex(true)">安装后自动扫描绑定</button>
+                <button class="btn btn-indigo btn-sm" :disabled="texInstallStatus.state === 'running'" @click="runTexInstall('install_texlive', texLiveForm)">下载并安装 TeX Live</button>
+              </div>
+            </div>
+
+            <div class="installer-console-box">
+              <div class="toolchain-header">
+                <span>
+                  安装进度：
+                  <strong x-text="texInstallStatus.progress || texInstallStatus.message || '就绪'"></strong>
+                </span>
+                <template x-if="texInstallStatus.state === 'running'">
+                  <button class="btn btn-danger btn-sm" @click="cancelTexInstall()">取消任务</button>
+                </template>
+              </div>
+              <pre class="install-log-pre" x-text="(texInstallStatus.logs || []).join('\n') || '点击上方按钮即可开始安装或补全宏包，进度日志将在此实时显示。'"></pre>
+            </div>
+          </div>
+        </template>
       </div>
       <div class="modal-footer">
-        <button class="btn btn-soft" @click="showCompilerModal = false">取消</button>
-        <button class="btn btn-indigo" @click="saveCompilerSettings()">保存设置</button>
+        <button class="btn btn-soft" @click="showCompilerModal = false">关闭</button>
+        <template x-if="compilerTab === 'config'">
+          <button class="btn btn-indigo" @click="saveCompilerSettings()">保存设置</button>
+        </template>
       </div>
     </div>
   </div>
