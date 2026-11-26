@@ -63,8 +63,13 @@ function sidecarApp() {
     companionViewMode: "pdf",
     companionData: { name: "", content: "", bullets: [] },
 
-    baselines: { archive: [], git: [] },
+    baselines: { archive: [], git: [], meta: {} },
     selectedBaselineKey: "",
+    _lastValidBaselineKey: "",
+    includeAllGitCommits: false,
+    showCustomRefModal: false,
+    customGitRef: "",
+    isVerifyingRef: false,
     manuscriptEngine: "auto",
 
     todos: [],
@@ -362,13 +367,16 @@ function sidecarApp() {
     },
 
     async loadManuscriptState(name) {
+      const allFlag = this.includeAllGitCommits ? "&all_commits=1" : "";
       const [baselines, todoDoc, status] = await Promise.all([
-        apiJson(`/api/baselines?manuscript=${encodeURIComponent(name)}`),
+        apiJson(`/api/baselines?manuscript=${encodeURIComponent(name)}${allFlag}`),
         apiJson(`/api/todos?manuscript=${encodeURIComponent(name)}`),
         apiJson(`/api/compile/status?manuscript=${encodeURIComponent(name)}`),
       ]);
       this.baselines = baselines;
       this.applyTodoDoc(todoDoc);
+      this.ensureSelectedBaselineOption();
+      this._lastValidBaselineKey = this.selectedBaselineKey;
       this.compileStatus = status;
       this.showErrorDrawer = status.state === "error";
       // Automatically display cached Clean PDF when Diff PDF does not exist yet
@@ -378,6 +386,21 @@ function sidecarApp() {
         }
         await this.renderCurrentView(false);
       }
+    },
+
+    ensureSelectedBaselineOption() {
+      if (!this.selectedBaselineKey.startsWith("git:")) return;
+      const ref = this.selectedBaselineKey.slice(4);
+      const exists = (this.baselines.git || []).some((b) => b.ref === ref);
+      if (!exists && ref) {
+        this.baselines.git = [{ type: "git", ref, kind: "custom", label: `指定基准: ${ref}` }, ...(this.baselines.git || [])];
+      }
+    },
+
+    baselineGitGroupLabel() {
+      if (this.includeAllGitCommits) return "Git 全仓库历史 (Tag / Commit)";
+      if (this.baselines.meta?.relocated) return "Git 历史 (含目录迁移前记录)";
+      return "Git 历史 (Tag / Commit)";
     },
 
     applyTodoDoc(doc) {
@@ -537,10 +560,64 @@ function sidecarApp() {
 
     async onBaselineChanged() {
       if (!this.activeManuscript) return;
+      if (this.selectedBaselineKey === "__action:toggle_all__") {
+        this.selectedBaselineKey = this._lastValidBaselineKey;
+        await this.toggleAllGitCommits();
+        return;
+      }
+      if (this.selectedBaselineKey === "__action:custom_ref__") {
+        this.selectedBaselineKey = this._lastValidBaselineKey;
+        this.customGitRef = "";
+        this.showCustomRefModal = true;
+        return;
+      }
+      this._lastValidBaselineKey = this.selectedBaselineKey;
       await apiJson(`/api/baseline?manuscript=${encodeURIComponent(this.activeManuscript)}`, {
         method: "PUT",
         body: JSON.stringify({ active_baseline: this.parseBaselineKey(), engine: this.manuscriptEngine }),
       });
+    },
+
+    async toggleAllGitCommits() {
+      if (!this.activeManuscript) return;
+      this.includeAllGitCommits = !this.includeAllGitCommits;
+      const allFlag = this.includeAllGitCommits ? "&all_commits=1" : "";
+      const res = await apiJson(`/api/baselines?manuscript=${encodeURIComponent(this.activeManuscript)}${allFlag}`);
+      this.baselines = res;
+      this.ensureSelectedBaselineOption();
+      const count = (res.git || []).length;
+      this.showToast(this.includeAllGitCommits ? `已加载全仓库提交 (${count} 项)` : `已切换为本稿件相关提交 (${count} 项)`);
+    },
+
+    async applyCustomGitRef() {
+      const ref = this.customGitRef.trim();
+      if (!this.activeManuscript || !ref || this.isVerifyingRef) return;
+      this.isVerifyingRef = true;
+      try {
+        const res = await apiJson(
+          `/api/baselines/verify?manuscript=${encodeURIComponent(this.activeManuscript)}&ref=${encodeURIComponent(ref)}`,
+        );
+        const item = res.baseline;
+        const list = this.baselines.git || [];
+        if (!list.some((b) => b.ref === item.ref)) {
+          this.baselines.git = [item, ...list];
+        }
+        const nextKey = `git:${item.ref}`;
+        this.showCustomRefModal = false;
+        this._lastValidBaselineKey = nextKey;
+        this.$nextTick(async () => {
+          this.selectedBaselineKey = nextKey;
+          await apiJson(`/api/baseline?manuscript=${encodeURIComponent(this.activeManuscript)}`, {
+            method: "PUT",
+            body: JSON.stringify({ active_baseline: { type: "git", ref: item.ref }, engine: this.manuscriptEngine }),
+          });
+        });
+        this.showToast(`已设置对比基准: ${item.ref}`);
+      } catch (err) {
+        this.showToast(`验证失败: ${err.message}`);
+      } finally {
+        this.isVerifyingRef = false;
+      }
     },
 
     async onEngineChanged() {

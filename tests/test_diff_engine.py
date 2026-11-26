@@ -200,3 +200,55 @@ def test_persistent_cache_hydrates_clean_and_companion_pdfs(tmp_path: Path, monk
         assert "highlights.tex" in st["companion_pdfs"]
     finally:
         coord2.stop()
+
+
+def test_diff_compilation_across_relocated_and_split_git_baseline(tmp_path: Path, monkeypatch) -> None:
+    tools = check_toolchain()["tools"]
+    if not tools["pdflatex"]["available"]:
+        return
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+
+    run_cmd(["git", "init"], cwd=tmp_path)
+    run_cmd(["git", "config", "user.name", "Test User"], cwd=tmp_path)
+    run_cmd(["git", "config", "user.email", "test@example.com"], cwd=tmp_path)
+
+    # Commit 1: manuscript lived at repo root under old filename paper.tex
+    (tmp_path / "paper.tex").write_text(
+        "\\documentclass{article}\n"
+        "\\begin{document}\n"
+        "Original root-level draft paragraph for IPM review.\n"
+        "\\end{document}\n",
+        encoding="utf-8",
+    )
+    run_cmd(["git", "add", "."], cwd=tmp_path)
+    run_cmd(["git", "commit", "-m", "v1 at root"], cwd=tmp_path)
+    c1_hash = run_cmd(["git", "rev-parse", "--short", "HEAD"], cwd=tmp_path).stdout.strip()
+
+    # Commit 2: relocate into docs/manuscripts/ipm_manuscript and split into sections/
+    ms_dir = tmp_path / "docs" / "manuscripts" / "ipm_manuscript"
+    (ms_dir / "sections").mkdir(parents=True)
+    (ms_dir / "sections" / "intro.tex").write_text(
+        "Revised paragraph after relocating under docs manuscripts.\n",
+        encoding="utf-8",
+    )
+    (ms_dir / "main.tex").write_text(
+        "\\documentclass{article}\n"
+        "\\begin{document}\n"
+        "\\input{sections/intro}\n"
+        "\\end{document}\n",
+        encoding="utf-8",
+    )
+    run_cmd(["git", "rm", "paper.tex"], cwd=tmp_path)
+    run_cmd(["git", "add", "."], cwd=tmp_path)
+    run_cmd(["git", "commit", "-m", "relocate and split"], cwd=tmp_path)
+
+    ws = resolve_workspace(str(tmp_path))
+    result = run_compile_job(
+        ws=ws,
+        manuscript_name="ipm_manuscript",
+        baseline={"type": "git", "ref": c1_hash},
+        preferred_engine="pdflatex",
+        compiler_settings={"recipe": "engine_only", "compile_timeout": 120},
+    )
+    assert Path(result["clean_pdf"]).is_file()
+    assert Path(result["diff_pdf"]).is_file()

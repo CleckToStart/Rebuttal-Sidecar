@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from proc_utils import run_cmd
-from scanner import find_entry_tex, list_baselines, resolve_workspace, scan_workspace
+from scanner import find_entry_tex, list_baselines, resolve_workspace, scan_workspace, verify_git_baseline_ref
 
 
 def _init_git_repo(repo_dir: Path) -> None:
@@ -88,3 +88,73 @@ def test_scan_workspace_accepts_direct_single_paper_folder(tmp_path: Path) -> No
     result = scan_workspace(str(paper))
     assert [m["name"] for m in result["manuscripts"]] == ["my_paper"]
     assert result["project_root"] == str(paper.resolve())
+
+
+def test_list_baselines_tracks_folder_relocation_file_split_and_all_commits(tmp_path: Path) -> None:
+    _init_git_repo(tmp_path)
+    legacy = tmp_path / "legacy_ipm"
+    legacy.mkdir()
+    (legacy / "paper.tex").write_text(
+        "\\documentclass{article}\n\\begin{document}\nBaseline manuscript draft for IPM.\n\\end{document}\n",
+        encoding="utf-8",
+    )
+    (legacy / "refs.bib").write_text("@article{a, title={A}}\n", encoding="utf-8")
+    run_cmd(["git", "add", "."], cwd=tmp_path)
+    run_cmd(["git", "commit", "-m", "initial ipm submission draft"], cwd=tmp_path)
+    run_cmd(["git", "tag", "v0.1"], cwd=tmp_path)
+
+    # Commit 2 at legacy path
+    (legacy / "paper.tex").write_text(
+        "\\documentclass{article}\n\\begin{document}\nExpanded experimental discussion for IPM.\n\\end{document}\n",
+        encoding="utf-8",
+    )
+    run_cmd(["git", "add", "."], cwd=tmp_path)
+    run_cmd(["git", "commit", "-m", "expand ipm experiments"], cwd=tmp_path)
+
+    # Commit 3: relocate to docs/manuscripts/ipm_manuscript, split paper.tex -> main.tex + sections/intro.tex, add companions
+    new_dir = tmp_path / "docs" / "manuscripts" / "ipm_manuscript"
+    (new_dir / "sections").mkdir(parents=True)
+    (new_dir / "sections" / "intro.tex").write_text("Expanded experimental discussion for IPM.\n", encoding="utf-8")
+    (new_dir / "main.tex").write_text(
+        "\\documentclass{article}\n\\begin{document}\n\\input{sections/intro}\n\\end{document}\n",
+        encoding="utf-8",
+    )
+    (new_dir / "title_page.tex").write_text("\\documentclass{article}\n\\begin{document}Title\\end{document}\n", encoding="utf-8")
+    (new_dir / "highlights.tex").write_text("\\documentclass{article}\n\\begin{document}HL\\end{document}\n", encoding="utf-8")
+    (new_dir / "main_zh.tex").write_text("\\documentclass{article}\n\\begin{document}ZH\\end{document}\n", encoding="utf-8")
+    (new_dir / "refs.bib").write_text("@article{a, title={A}}\n", encoding="utf-8")
+    run_cmd(["git", "rm", "-rf", "legacy_ipm"], cwd=tmp_path)
+    run_cmd(["git", "add", "."], cwd=tmp_path)
+    run_cmd(["git", "commit", "-m", "chore(docs): relocate IPM manuscript under docs/manuscripts"], cwd=tmp_path)
+
+    # Commit 4: non-TeX code commit
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "model.py").write_text("def forward(x):\n    return x\n", encoding="utf-8")
+    run_cmd(["git", "add", "."], cwd=tmp_path)
+    run_cmd(["git", "commit", "-m", "feat: improve KGQA retriever"], cwd=tmp_path)
+
+    scanned = scan_workspace(str(tmp_path))
+    ms = scanned["manuscripts"][0]
+    assert ms["entry_tex"] == "main.tex"
+    companions = {c["name"]: c["role"] for c in ms["companions"]}
+    assert companions["main_zh.tex"] == "Translation"
+
+    ws = resolve_workspace(str(tmp_path))
+    scoped = list_baselines(ws, "ipm_manuscript", include_all_commits=False)
+    assert scoped["meta"]["relocated"] is True
+    scoped_tags = [b["ref"] for b in scoped["git"] if b["kind"] == "tag"]
+    scoped_labels = [b["label"] for b in scoped["git"] if b["kind"] == "commit"]
+    assert "v0.1" in scoped_tags
+    assert len(scoped_labels) == 3
+    assert any("relocate IPM manuscript" in lbl for lbl in scoped_labels)
+    assert any("expand ipm experiments" in lbl for lbl in scoped_labels)
+    assert any("initial ipm submission draft" in lbl for lbl in scoped_labels)
+
+    repo_wide = list_baselines(ws, "ipm_manuscript", include_all_commits=True)
+    all_labels = [b["label"] for b in repo_wide["git"] if b["kind"] == "commit"]
+    assert len(all_labels) == 4
+    assert any("improve KGQA retriever" in lbl for lbl in all_labels)
+
+    verified = verify_git_baseline_ref(ws, "ipm_manuscript", "HEAD~2")
+    assert verified["type"] == "git"
+    assert verified["ref"] == "HEAD~2"

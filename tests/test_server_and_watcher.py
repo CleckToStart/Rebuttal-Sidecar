@@ -7,6 +7,7 @@ import urllib.request
 from pathlib import Path
 
 from config import AppConfig
+from proc_utils import run_cmd
 from server import SidecarApp
 from watcher import ManuscriptWatcher
 
@@ -247,5 +248,47 @@ def test_custom_project_name_and_companion_endpoints(tmp_path: Path, monkeypatch
         )
         ren = json.loads(urllib.request.urlopen(req_ren, timeout=3).read().decode("utf-8"))
         assert ren["workspace_history"][0]["name"] == "ESWA Final"
+    finally:
+        app.stop()
+
+
+def test_baselines_all_commits_and_verify_endpoints(tmp_path: Path) -> None:
+    run_cmd(["git", "init"], cwd=tmp_path)
+    run_cmd(["git", "config", "user.name", "Test User"], cwd=tmp_path)
+    run_cmd(["git", "config", "user.email", "test@example.com"], cwd=tmp_path)
+
+    paper = tmp_path / "docs" / "manuscripts" / "ipm_manuscript"
+    paper.mkdir(parents=True)
+    (paper / "main.tex").write_text("\\documentclass{article}\\begin{document}v1\\end{document}", encoding="utf-8")
+    run_cmd(["git", "add", "."], cwd=tmp_path)
+    run_cmd(["git", "commit", "-m", "initial manuscript"], cwd=tmp_path)
+
+    (tmp_path / "README.md").write_text("# KGQA\n", encoding="utf-8")
+    run_cmd(["git", "add", "."], cwd=tmp_path)
+    run_cmd(["git", "commit", "-m", "docs: update README"], cwd=tmp_path)
+
+    app = SidecarApp(config=AppConfig(tmp_path / "cfg.json"), initial_workspace=str(tmp_path))
+    port = app.start(port=0)
+    base = f"http://127.0.0.1:{port}"
+    try:
+        scoped = json.loads(
+            urllib.request.urlopen(f"{base}/api/baselines?manuscript=ipm_manuscript", timeout=3).read().decode("utf-8")
+        )
+        assert len(scoped["git"]) == 1
+
+        all_res = json.loads(
+            urllib.request.urlopen(f"{base}/api/baselines?manuscript=ipm_manuscript&all_commits=1", timeout=3)
+            .read()
+            .decode("utf-8")
+        )
+        assert len(all_res["git"]) == 2
+        assert any("[全库]" in b["label"] for b in all_res["git"])
+
+        verified = json.loads(
+            urllib.request.urlopen(f"{base}/api/baselines/verify?manuscript=ipm_manuscript&ref=HEAD", timeout=3)
+            .read()
+            .decode("utf-8")
+        )
+        assert verified["baseline"]["ref"] == "HEAD"
     finally:
         app.stop()

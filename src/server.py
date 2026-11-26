@@ -18,7 +18,7 @@ from config import AppConfig
 from demo_workspace import ensure_demo_workspace
 from diff_engine import CompileCoordinator
 from proc_utils import check_toolchain
-from scanner import WorkspacePaths, list_baselines, resolve_workspace, scan_workspace
+from scanner import WorkspacePaths, list_baselines, resolve_workspace, scan_workspace, verify_git_baseline_ref
 from todo_manager import TodoManager
 from watcher import ManuscriptWatcher
 
@@ -315,13 +315,27 @@ class SidecarApp:
         @app.get("/api/baselines")
         def get_baselines():
             name = request.query.get("manuscript", "").strip()
+            all_commits = request.query.get("all_commits", "0").strip().lower() in ("1", "true", "yes")
             try:
                 self._manuscript_dir(name)
             except (ValueError, FileNotFoundError) as exc:
                 return _json_response({"error": str(exc)}, status=400)
             with self._state_lock:
                 ws = self.workspace
-            return _json_response(list_baselines(ws, name))
+            return _json_response(list_baselines(ws, name, include_all_commits=all_commits))
+
+        @app.get("/api/baselines/verify")
+        def get_baselines_verify():
+            name = request.query.get("manuscript", "").strip()
+            ref = request.query.get("ref", "").strip()
+            try:
+                self._manuscript_dir(name)
+                with self._state_lock:
+                    ws = self.workspace
+                item = verify_git_baseline_ref(ws, name, ref)
+                return _json_response({"baseline": item})
+            except (ValueError, FileNotFoundError) as exc:
+                return _json_response({"error": str(exc)}, status=400)
 
         @app.get("/api/todos")
         def get_todos():

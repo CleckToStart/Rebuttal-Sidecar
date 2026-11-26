@@ -20,7 +20,7 @@ from typing import Callable
 
 from config import DEFAULT_COMPILER_SETTINGS
 from proc_utils import build_tex_env, miktex_installer_flags, resolve_latexdiff, run_cmd, which_tool
-from scanner import WorkspacePaths, find_entry_tex
+from scanner import WorkspacePaths, find_entry_tex, resolve_manuscript_tree_at_ref
 
 INPUT_CMD_RE = re.compile(r"\\(input|include)\s*\{([^}]+)\}")
 TEX_PROGRAM_RE = re.compile(r"^\s*%\s*!TEX\s+(?:TS-)?program\s*=\s*(\w+)", re.IGNORECASE)
@@ -86,11 +86,16 @@ def _strip_comment_tail(line: str) -> tuple[str, str]:
     return line, ""
 
 
-def _resolve_tex_target(raw_target: str, base_dir: Path, entry_dir: Path) -> Path | None:
+def _resolve_tex_target(raw_target: str, base_dir: Path, entry_dir: Path, strip_prefix: str = "") -> Path | None:
     target = raw_target.strip()
     if not target or "\\" in target or "#" in target:
         return None
-    candidates = [target] if Path(target).suffix else [f"{target}.tex", target]
+    raw_variants = [target]
+    if strip_prefix and target.startswith(f"{strip_prefix}/"):
+        raw_variants.append(target[len(strip_prefix) + 1 :])
+    candidates: list[str] = []
+    for variant in raw_variants:
+        candidates.extend([variant] if Path(variant).suffix else [f"{variant}.tex", variant])
     for parent in (base_dir, entry_dir):
         for rel in candidates:
             candidate = (parent / rel).resolve()
@@ -103,6 +108,7 @@ def flatten_tex(
     entry_tex: Path,
     root_dir: Path | None = None,
     visited: set[Path] | None = None,
+    strip_prefix: str = "",
 ) -> str:
     """Recursively expand \\input and \\include directives into a single TeX string."""
     resolved_entry = entry_tex.resolve()
@@ -127,11 +133,11 @@ def flatten_tex(
         for match in matches:
             rebuilt.append(code[cursor : match.start()])
             cmd, raw_target = match.group(1), match.group(2)
-            target_path = _resolve_tex_target(raw_target, base_dir, resolved_entry.parent)
+            target_path = _resolve_tex_target(raw_target, base_dir, resolved_entry.parent, strip_prefix=strip_prefix)
             if target_path is None:
                 rebuilt.append(match.group(0))
             else:
-                expanded = flatten_tex(target_path, base_dir, seen)
+                expanded = flatten_tex(target_path, base_dir, seen, strip_prefix=strip_prefix)
                 if cmd == "include":
                     rebuilt.append(f"\\clearpage\n{expanded}\n\\clearpage\n")
                 else:
@@ -322,11 +328,43 @@ def _safe_extract_tar(tar_bytes: bytes, dest_dir: Path) -> None:
             tf.extract(member, dest_resolved, filter="data")
 
 
+_ROOT_TEX_EXTS = {".tex", ".bib", ".bst", ".cls", ".sty", ".txt", ".csv"}
+_NON_MANUSCRIPT_ROOT_DIRS = {
+    "src", "lib", "app", "tests", "test", "data", "datasets", "checkpoints", "models",
+    "scripts", "notebooks", "node_modules", "experiments", "results", "outputs",
+    "configs", "third_party", "vendor", ".github", ".vscode",
+}
+
+
+def _select_root_archive_paths(git_root: Path, ref: str) -> list[str]:
+    ls_res = run_cmd(["git", "ls-tree", ref], cwd=git_root, timeout=15)
+    if ls_res.returncode != 0:
+        return []
+    selected: list[str] = []
+    for line in ls_res.stdout.splitlines():
+        meta, _, name = line.partition("\t")
+        if not name:
+            continue
+        obj_type = meta.split()[1] if len(meta.split()) >= 2 else ""
+        if obj_type == "blob" and Path(name).suffix.lower() in _ROOT_TEX_EXTS:
+            selected.append(name)
+        elif obj_type == "tree" and not name.startswith(".") and name.lower() not in _NON_MANUSCRIPT_ROOT_DIRS:
+            selected.append(name)
+    return selected
+
+
 def extract_baseline(ws: WorkspacePaths, manuscript_name: str, baseline: dict, old_dir: Path) -> Path:
     """Extract historical baseline snapshot into old_dir and write flattened flat_old.tex."""
     _clear_dir(old_dir)
     btype = baseline["type"]
-    ref = baseline["ref"]
+    ref = str(baseline["ref"]).strip()
+    if not ref or ref.startswith("-"):
+        raise CompileError(f"Invalid baseline reference: {ref}")
+
+    manuscript_dir = (ws.manuscripts_dir / manuscript_name).resolve()
+    cur_entry = find_entry_tex(manuscript_dir)
+    preferred_entry = cur_entry.name if cur_entry else "main.tex"
+    strip_prefix = ""
 
     if btype == "archive":
         archive_src = ws.manuscripts_dir / "_archive" / ref
@@ -336,13 +374,16 @@ def extract_baseline(ws: WorkspacePaths, manuscript_name: str, baseline: dict, o
     elif btype == "git":
         if not ws.git_root:
             raise CompileError("Git repository not found for git baseline.")
-        rel_posix = (ws.manuscripts_dir / manuscript_name).resolve().relative_to(ws.git_root).as_posix()
-        res = run_cmd(
-            ["git", "archive", "--format=tar", f"{ref}:{rel_posix}"],
-            cwd=ws.git_root,
-            timeout=30,
-            text=False,
-        )
+        tree_posix = resolve_manuscript_tree_at_ref(ws.git_root, ref, manuscript_dir, preferred_entry)
+        if tree_posix is None:
+            raise CompileError(f"Manuscript '{manuscript_name}' not found in git baseline '{ref}'.")
+        strip_prefix = tree_posix
+        if tree_posix:
+            cmd = ["git", "archive", "--format=tar", f"{ref}:{tree_posix}"]
+        else:
+            root_paths = _select_root_archive_paths(ws.git_root, ref)
+            cmd = ["git", "archive", "--format=tar", ref, *(["--", *root_paths] if root_paths else [])]
+        res = run_cmd(cmd, cwd=ws.git_root, timeout=30, text=False)
         if res.returncode != 0:
             err = res.stderr.decode("utf-8", errors="replace") if isinstance(res.stderr, bytes) else res.stderr
             raise CompileError(f"Failed to extract git baseline '{ref}': {err.strip()}")
@@ -350,12 +391,12 @@ def extract_baseline(ws: WorkspacePaths, manuscript_name: str, baseline: dict, o
     else:
         raise CompileError(f"Unsupported baseline type: {btype}")
 
-    entry = find_entry_tex(old_dir)
+    entry = find_entry_tex(old_dir, preferred_name=preferred_entry)
     if not entry:
         raise CompileError(f"No \\documentclass entry file found in baseline '{ref}'.")
 
     flat_old = old_dir / "flat_old.tex"
-    flat_old.write_text(flatten_tex(entry, old_dir), encoding="utf-8")
+    flat_old.write_text(flatten_tex(entry, old_dir, strip_prefix=strip_prefix), encoding="utf-8")
     return flat_old
 
 

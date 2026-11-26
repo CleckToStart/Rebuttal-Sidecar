@@ -168,11 +168,17 @@
                   <option :value="'archive:' + b.ref" x-text="b.label"></option>
                 </template>
               </optgroup>
-              <optgroup label="Git 历史 (Tag / Commit)" x-show="baselines.git.length > 0">
-                <template x-for="b in baselines.git" :key="'git:' + b.ref">
+              <optgroup :label="baselineGitGroupLabel()" x-show="baselines.git.length > 0">
+                <template x-for="b in baselines.git" :key="'git:' + b.ref + ':' + (b.commit || '')">
                   <option :value="'git:' + b.ref" x-text="b.label"></option>
                 </template>
               </optgroup>
+              <template x-if="workspace.git_root">
+                <optgroup label="更多 Git 历史选项">
+                  <option value="__action:toggle_all__" x-text="includeAllGitCommits ? '⇄ 仅显示涉及本稿件的提交' : '⇄ 显示全仓库提交（含非 TeX 提交）'"></option>
+                  <option value="__action:custom_ref__">⌕ 输入指定 Commit / 分支 / Tag...</option>
+                </optgroup>
+              </template>
             </select>
           </template>
 
@@ -590,6 +596,32 @@
       <div class="modal-footer">
         <button class="btn btn-soft" @click="confirmModal.open = false">取消</button>
         <button class="btn btn-danger" @click="runConfirmAction()" x-text="confirmModal.confirmText || '确认移除'"></button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Custom Git Baseline Ref Modal -->
+  <div class="modal-backdrop" x-show="showCustomRefModal" @click.self="showCustomRefModal = false">
+    <div class="modal modal-sm">
+      <div class="modal-header">
+        <h3>指定 Git 对比基准</h3>
+        <button class="link-btn" @click="showCustomRefModal = false">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-field">
+          <label>Commit Hash / 分支名 / Tag / 相对引用</label>
+          <input
+            type="text"
+            x-model="customGitRef"
+            @keydown.enter.prevent="applyCustomGitRef()"
+            placeholder="例如 a1b2c3d、HEAD~3、main 或 submission-v1"
+          />
+          <span style="font-size:11.5px;color:var(--muted);">即使该提交中论文曾位于不同目录或文件名，系统也会自动定位对应版本用于 Diff 对比。</span>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-soft" @click="showCustomRefModal = false">取消</button>
+        <button class="btn btn-indigo" :disabled="isVerifyingRef || !customGitRef.trim()" @click="applyCustomGitRef()" x-text="isVerifyingRef ? '验证中...' : '验证并设为基准'"></button>
       </div>
     </div>
   </div>
