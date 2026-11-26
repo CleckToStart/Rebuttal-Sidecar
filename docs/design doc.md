@@ -222,12 +222,15 @@ docs/manuscripts/
 
 | **方法** | **路径**                                 | **功能说明**                                                 |
 | -------- | ---------------------------------------- | ------------------------------------------------------------ |
-| `GET`    | `/api/workspace`                         | 返回当前工作区、结构化历史工程列表（含上次稿件与置顶状态）、活跃稿件及 `_archive` 基准 |
-| `POST`   | `/api/workspace/open`                    | 切换工作区路径，自动恢复该工程上次选择的稿件并重绑监听       |
-| `POST`   | `/api/workspace/select`                  | 拉起系统原生文件夹选择框并切换工作区                         |
+| `GET`    | `/api/workspace`                         | 返回当前工作区、结构化历史工程列表（含自定义名称、上次稿件与置顶状态）、活跃稿件及附属文档 |
+| `POST`   | `/api/workspace/open`                    | 切换工作区路径（支持自定义显示名 `name`），自动恢复上次稿件并重绑监听 |
+| `POST`   | `/api/workspace/pick-path`               | 拉起原生文件夹选择框并返回建议名称与稿件数（供导入弹窗预填） |
 | `POST`   | `/api/workspace/demo`                    | 创建并加载示例返修工程                                       |
-| `PATCH`  | `/api/workspace/history`                 | 置顶或取消置顶历史工程条目                                   |
-| `DELETE` | `/api/workspace/history`                 | 从历史工程侧边栏移除指定条目                                 |
+| `PATCH`  | `/api/workspace/history`                 | 重命名或置顶/取消置顶历史工程条目                           |
+| `DELETE` | `/api/workspace/history`                 | 从历史工程侧边栏移除指定条目（前端强制二次确认）             |
+| `GET`    | `/api/companions/templates`              | 列出支持的附属文档模板（`title_page`、`highlights`、`cover_letter`、`declaration`） |
+| `GET`    | `/api/companions/content?manuscript=<name>&file=<f>` | 读取附属文档源码与条目字符数统计（如 Highlights ≤85 字符检查） |
+| `POST`   | `/api/companions?manuscript=<name>`      | 基于模板创建非正文附属文档并刷新工作区目录树                 |
 | `GET`    | `/api/baselines?manuscript=<name>`       | 查询指定稿件的 Git Tag / Commit 历史与本地归档基准           |
 | `GET`    | `/api/todos?manuscript=<name>`           | 读取 `.rebuttal_todo.json` 并切换监听上下文                  |
 | `POST`   | `/api/todos?manuscript=<name>`           | 新增审稿意见条目或整体更新                                   |

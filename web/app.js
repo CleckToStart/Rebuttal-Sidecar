@@ -12,6 +12,12 @@ async function getPdfJs() {
 }
 
 const STATUS_CYCLE = ["pending", "agent_done", "verified"];
+const COMPANION_DEFAULTS = {
+  title_page: "title_page.tex",
+  highlights: "highlights.tex",
+  cover_letter: "cover_letter.tex",
+  declaration: "declaration.tex",
+};
 
 async function apiJson(url, options = {}) {
   const res = await fetch(url, {
@@ -53,6 +59,10 @@ function sidecarApp() {
       workspace_history: [],
     },
     activeManuscript: "",
+    activeDocTarget: { type: "main", name: "", role: "Main", compilable: true, kind: "tex" },
+    companionViewMode: "pdf",
+    companionData: { name: "", content: "", bullets: [] },
+
     baselines: { archive: [], git: [] },
     selectedBaselineKey: "",
     manuscriptEngine: "auto",
@@ -80,10 +90,13 @@ function sidecarApp() {
       dirty: false,
       has_clean: false,
       has_diff: false,
+      companion_pdfs: {},
+      compiling_target: "",
       errors: [],
       log_tail: "",
       message: "",
     },
+    isTriggeringCompile: false,
 
     sidebarExpanded: readBoolPref("rs_sidebar_expanded", true),
     todoCollapsed: readBoolPref("rs_todo_collapsed", false),
@@ -99,6 +112,13 @@ function sidecarApp() {
     showCompilerModal: false,
     showWorkspaceModal: false,
     workspaceInputPath: "",
+    workspaceCustomName: "",
+    showRenameModal: false,
+    renameTarget: { path: "", name: "" },
+    showCompanionModal: false,
+    companionForm: { template: "title_page", filename: "title_page.tex" },
+    confirmModal: { open: false, title: "", message: "", confirmText: "确认", onConfirm: null },
+
     showTodoModal: false,
     showAdvancedTodoFields: false,
     todoForm: {
@@ -144,12 +164,24 @@ function sidecarApp() {
       writeBoolPref("rs_todo_collapsed", this.todoCollapsed);
     },
 
+    isCompiling() {
+      return this.isTriggeringCompile || this.compileStatus.state === "compiling";
+    },
+
+    canCompileCurrentTarget() {
+      if (!this.activeManuscript) return false;
+      if (this.activeDocTarget.type === "companion") return Boolean(this.activeDocTarget.compilable);
+      return true;
+    },
+
     connectSSE() {
       if (this._sse) this._sse.close();
       const es = new EventSource("/api/events");
       es.addEventListener("WORKSPACE_UPDATED", async (e) => {
         this.applyWorkspace(JSON.parse(e.data));
-        if (this.activeManuscript) await this.loadManuscriptState(this.activeManuscript);
+        if (this.activeManuscript && this.activeDocTarget.type === "main") {
+          await this.loadManuscriptState(this.activeManuscript);
+        }
       });
       es.addEventListener("TODO_UPDATED", (e) => {
         const doc = JSON.parse(e.data);
@@ -179,18 +211,22 @@ function sidecarApp() {
       es.addEventListener("COMPILE_SUCCESS", async (e) => {
         const st = JSON.parse(e.data);
         if (st.manuscript === this.activeManuscript) {
+          this.isTriggeringCompile = false;
           this.compileStatus = st;
           this.showErrorDrawer = false;
-          if (!st.has_diff && this.viewMode === "diff") {
-            this.viewMode = "clean";
+          if (this.activeDocTarget.type === "main") {
+            if (!st.has_diff && this.viewMode === "diff") this.viewMode = "clean";
+            await this.renderCurrentView(true);
+          } else if (this.companionViewMode === "pdf") {
+            await this.renderCompanionPdf(true);
           }
-          await this.renderCurrentView(true);
           this.showToast("编译完成");
         }
       });
       es.addEventListener("COMPILE_ERROR", (e) => {
         const st = JSON.parse(e.data);
         if (st.manuscript === this.activeManuscript) {
+          this.isTriggeringCompile = false;
           this.compileStatus = st;
           this.showErrorDrawer = true;
         }
@@ -228,6 +264,11 @@ function sidecarApp() {
       return item.path;
     },
 
+    currentCompanions() {
+      const m = (this.workspace.manuscripts || []).find((x) => x.name === this.activeManuscript);
+      return m?.companions || [];
+    },
+
     async togglePinWorkspace(item) {
       const res = await apiJson("/api/workspace/history", {
         method: "PATCH",
@@ -236,12 +277,54 @@ function sidecarApp() {
       this.workspace.workspace_history = res.workspace_history || [];
     },
 
-    async removeWorkspaceHistory(item) {
+    openRenameModal(item) {
+      this.renameTarget = { path: item.path, name: item.name };
+      this.showRenameModal = true;
+    },
+
+    async confirmRenameWorkspace() {
+      if (!this.renameTarget.name.trim()) return;
       const res = await apiJson("/api/workspace/history", {
-        method: "DELETE",
-        body: JSON.stringify({ path: item.path }),
+        method: "PATCH",
+        body: JSON.stringify({ path: this.renameTarget.path, name: this.renameTarget.name.trim() }),
       });
       this.workspace.workspace_history = res.workspace_history || [];
+      this.showRenameModal = false;
+      this.showToast("已更新项目名称");
+    },
+
+    askConfirm({ title, message, confirmText = "确认", onConfirm }) {
+      this.confirmModal = { open: true, title, message, confirmText, onConfirm };
+    },
+
+    async runConfirmAction() {
+      const fn = this.confirmModal.onConfirm;
+      this.confirmModal.open = false;
+      if (fn) await fn();
+    },
+
+    requestRemoveWorkspace(item) {
+      this.askConfirm({
+        title: "移除历史项目",
+        message: `确认将「${item.name}」从历史工程列表移除？仅移除记录，不会删除磁盘上的任何论文文件。`,
+        confirmText: "确认移除",
+        onConfirm: async () => {
+          const res = await apiJson("/api/workspace/history", {
+            method: "DELETE",
+            body: JSON.stringify({ path: item.path }),
+          });
+          this.workspace.workspace_history = res.workspace_history || [];
+          if (this.isCurrentWorkspace(item.path)) {
+            if (this.workspace.workspace_history.length > 0) {
+              await this.openWorkspacePath(this.workspace.workspace_history[0].path);
+            } else {
+              this.workspace = { ...this.workspace, project_root: "", manuscripts: [], active_manuscript: "" };
+              this.activeManuscript = "";
+            }
+          }
+          this.showToast("已从历史记录移除");
+        },
+      });
     },
 
     async loadWorkspace() {
@@ -255,10 +338,26 @@ function sidecarApp() {
     applyWorkspace(ws) {
       this.workspace = ws;
       this.activeManuscript = ws.active_manuscript || (ws.manuscripts[0]?.name ?? "");
+      const m = (ws.manuscripts || []).find((x) => x.name === this.activeManuscript);
+      this.activeDocTarget = {
+        type: "main",
+        name: m?.entry_tex || "main.tex",
+        role: "Main",
+        compilable: true,
+        kind: "tex",
+      };
     },
 
-    async selectManuscript(name) {
+    async selectMainManuscript(name) {
       this.activeManuscript = name;
+      const m = (this.workspace.manuscripts || []).find((x) => x.name === name);
+      this.activeDocTarget = {
+        type: "main",
+        name: m?.entry_tex || "main.tex",
+        role: "Main",
+        compilable: true,
+        kind: "tex",
+      };
       await this.loadManuscriptState(name);
     },
 
@@ -272,7 +371,13 @@ function sidecarApp() {
       this.applyTodoDoc(todoDoc);
       this.compileStatus = status;
       this.showErrorDrawer = status.state === "error";
-      await this.renderCurrentView(false);
+      // Automatically display cached Clean PDF when Diff PDF does not exist yet
+      if (this.activeDocTarget.type === "main") {
+        if (this.viewMode === "diff" && !status.has_diff && status.has_clean) {
+          this.viewMode = "clean";
+        }
+        await this.renderCurrentView(false);
+      }
     },
 
     applyTodoDoc(doc) {
@@ -282,32 +387,42 @@ function sidecarApp() {
       this.selectedBaselineKey = bl && bl.type && bl.ref ? `${bl.type}:${bl.ref}` : "";
     },
 
-    openWorkspacePicker() {
-      if (this.workspace.project_root) {
-        this.workspaceInputPath = this.workspace.project_root;
-      }
+    openImportModal() {
+      this.workspaceInputPath = "";
+      this.workspaceCustomName = "";
       this.showWorkspaceModal = true;
     },
 
-    async selectFolderNative() {
-      try {
-        const res = await apiJson("/api/workspace/select", { method: "POST" });
-        if (!res.cancelled) {
-          this.showWorkspaceModal = false;
-          this.applyWorkspace(res);
-          if (this.activeManuscript) await this.loadManuscriptState(this.activeManuscript);
-        }
-      } catch {
-        this.showWorkspaceModal = true;
+    syncSuggestedName() {
+      const raw = this.workspaceInputPath.trim().replace(/[/\\]+$/, "");
+      if (!raw) return;
+      if (!this.workspaceCustomName.trim()) {
+        this.workspaceCustomName = raw.split(/[/\\]/).pop() || raw;
       }
     },
 
-    async openWorkspacePath(path) {
-      if (!path) return;
+    async pickImportFolder() {
+      try {
+        const res = await apiJson("/api/workspace/pick-path", { method: "POST" });
+        if (!res.cancelled && res.path) {
+          this.workspaceInputPath = res.path;
+          this.workspaceCustomName = res.suggested_name || "";
+        }
+      } catch (err) {
+        this.showToast(err.message);
+      }
+    },
+
+    async confirmImportWorkspace() {
+      await this.openWorkspacePath(this.workspaceInputPath, this.workspaceCustomName);
+    },
+
+    async openWorkspacePath(path, customName = "") {
+      if (!path || !path.trim()) return;
       try {
         const res = await apiJson("/api/workspace/open", {
           method: "POST",
-          body: JSON.stringify({ path }),
+          body: JSON.stringify({ path: path.trim(), name: customName.trim() }),
         });
         this.showWorkspaceModal = false;
         this.applyWorkspace(res);
@@ -327,6 +442,88 @@ function sidecarApp() {
       } catch (err) {
         this.showToast(`加载示例失败: ${err.message}`);
       }
+    },
+
+    openCompanionModal() {
+      this.companionForm = { template: "title_page", filename: "title_page.tex" };
+      this.showCompanionModal = true;
+    },
+
+    onCompanionTemplateChange() {
+      this.companionForm.filename = COMPANION_DEFAULTS[this.companionForm.template] || "companion.tex";
+    },
+
+    async createCompanion() {
+      if (!this.activeManuscript) return;
+      try {
+        const res = await apiJson(`/api/companions?manuscript=${encodeURIComponent(this.activeManuscript)}`, {
+          method: "POST",
+          body: JSON.stringify(this.companionForm),
+        });
+        this.workspace = res.workspace;
+        this.showCompanionModal = false;
+        this.showToast(`已创建 ${res.created.name}`);
+        await this.selectCompanion(res.created);
+      } catch (err) {
+        this.showToast(`创建失败: ${err.message}`);
+      }
+    },
+
+    async selectCompanion(comp) {
+      this.activeDocTarget = { type: "companion", ...comp };
+      this.companionViewMode = comp.compilable ? "pdf" : "source";
+      await this.loadCompanionContent(comp.name);
+      if (comp.compilable) {
+        await this.renderCompanionPdf(false);
+      }
+    },
+
+    async loadCompanionContent(filename) {
+      const data = await apiJson(
+        `/api/companions/content?manuscript=${encodeURIComponent(this.activeManuscript)}&file=${encodeURIComponent(filename)}`,
+      );
+      this.companionData = data;
+    },
+
+    async switchCompanionViewMode(mode) {
+      this.companionViewMode = mode;
+      if (mode === "source") {
+        await this.loadCompanionContent(this.activeDocTarget.name);
+      } else {
+        await this.renderCompanionPdf(true);
+      }
+    },
+
+    hasCompanionPdf() {
+      const map = this.compileStatus.companion_pdfs || {};
+      return Boolean(map[this.activeDocTarget.name]);
+    },
+
+    async renderCompanionPdf(preserveScroll) {
+      const container = document.getElementById("companion-pdf-container");
+      if (!container || !this.hasCompanionPdf()) {
+        if (container) container.innerHTML = "";
+        this.totalPages = 0;
+        return;
+      }
+      const token = ++this._renderToken;
+      const ms = encodeURIComponent(this.activeManuscript);
+      const file = encodeURIComponent(this.activeDocTarget.name);
+      await this.renderPdfInto(`/api/pdf/companion?manuscript=${ms}&file=${file}&t=${Date.now()}`, container, token, true);
+    },
+
+    viewerTitleText() {
+      if (this.activeDocTarget.type === "companion") {
+        return `${this.activeDocTarget.role} (${this.activeDocTarget.name})`;
+      }
+      return { diff: "修订对比视图 (Diff)", clean: "净版预览 (Clean)", split: "双栏同步对照" }[this.viewMode] || "PDF 预览";
+    },
+
+    viewerSubText() {
+      if (this.activeDocTarget.type === "companion") {
+        return `${this.activeManuscript} · 附属文档`;
+      }
+      return this.activeManuscript + (this.selectedBaselineKey ? ` · 基准: ${this.selectedBaselineKey}` : " · 无对比基准");
     },
 
     parseBaselineKey() {
@@ -406,7 +603,9 @@ function sidecarApp() {
     },
 
     async triggerCompile() {
-      if (!this.activeManuscript) return;
+      if (!this.activeManuscript || this.isCompiling()) return;
+      this.isTriggeringCompile = true;
+      const targetTex = this.activeDocTarget.type === "companion" ? this.activeDocTarget.name : "";
       try {
         const st = await apiJson("/api/compile", {
           method: "POST",
@@ -414,16 +613,18 @@ function sidecarApp() {
             manuscript: this.activeManuscript,
             baseline: this.parseBaselineKey(),
             engine: this.manuscriptEngine,
+            target_tex: targetTex,
           }),
         });
         this.compileStatus = st;
       } catch (err) {
+        this.isTriggeringCompile = false;
         this.showToast(`触发编译失败: ${err.message}`);
       }
     },
 
     statusBadgeClass() {
-      if (this.compileStatus.state === "compiling") return "compiling";
+      if (this.isCompiling()) return "compiling";
       if (this.compileStatus.state === "error") return "error";
       if (this.compileStatus.dirty) return "dirty";
       if (this.compileStatus.state === "success") return "success";
@@ -431,7 +632,7 @@ function sidecarApp() {
     },
 
     statusLabel() {
-      if (this.compileStatus.state === "compiling") return "编译中...";
+      if (this.isCompiling()) return "编译中...";
       if (this.compileStatus.state === "error") return "编译失败";
       if (this.compileStatus.dirty) return "源码已变更";
       if (this.compileStatus.state === "success") return `已就绪 (${this.compileStatus.engine || "TeX"})`;
@@ -523,12 +724,20 @@ function sidecarApp() {
       }
     },
 
-    async deleteTodo(itemId) {
-      const doc = await apiJson(
-        `/api/todos/${encodeURIComponent(itemId)}?manuscript=${encodeURIComponent(this.activeManuscript)}`,
-        { method: "DELETE" },
-      );
-      this.applyTodoDoc(doc);
+    requestDeleteTodo(item) {
+      this.askConfirm({
+        title: "删除审稿意见",
+        message: `确认删除审稿意见「${item.id} (${item.reviewer})」？此操作会将其从 .rebuttal_todo.json 中移除。`,
+        confirmText: "确认删除",
+        onConfirm: async () => {
+          const doc = await apiJson(
+            `/api/todos/${encodeURIComponent(item.id)}?manuscript=${encodeURIComponent(this.activeManuscript)}`,
+            { method: "DELETE" },
+          );
+          this.applyTodoDoc(doc);
+          this.showToast(`已删除 ${item.id}`);
+        },
+      });
     },
 
     openHelpModal(tab = "init") {
@@ -562,20 +771,37 @@ function sidecarApp() {
 
     folderInitPrompt() {
       const root = this.workspace.project_root || "<你的科研项目根目录>";
-      return `请帮我将当前项目（${root}）中的 LaTeX 论文手稿整理/初始化为 Rebuttal Sidecar 标准目录结构，方便版本对比与返修管理：
+      return `请帮我将当前项目（${root}）中的 LaTeX 论文手稿整理/初始化为 Rebuttal Sidecar 标准目录结构，方便版本对比、返修与附属文档管理：
 
 1. 目录结构规范：
-   - docs/manuscripts/references.bib          （如存在参考文献库，放在公共目录，稿件内用 \\bibliography{../references} 或本地 references.bib）
+   - docs/manuscripts/references.bib          （共享参考文献库）
    - docs/manuscripts/_archive/<v1_submitted>/ （保存一版投稿时的原始手稿快照，作为 Diff 对比基准）
    - docs/manuscripts/<manuscript_name>/       （当前活跃返修稿件）
-     ├── main.tex                              （必须包含 \\documentclass 入口声明）
+     ├── main.tex                              （主稿入口，含 \\documentclass）
      ├── sections/*.tex                        （按章节拆分子文件并用 \\input{sections/...} 引入）
      ├── figures/                              （图片与矢量 PDF 插图）
+     ├── title_page.tex                        （非正文附属文档：作者/单位/致谢/CRediT，含独立 \\documentclass）
+     ├── highlights.tex                        （非正文附属文档：投稿亮点，3~5 条且每条 ≤ 85 字符）
+     ├── cover_letter.tex                      （非正文附属文档：致编辑信）
      └── .rebuttal_todo.json                   （返修意见跟踪文件）
-2. 迁移约束：
-   - 对 Git 已跟踪文件优先使用 git mv，保留历史提交记录；
-   - 确保 .gitignore 忽略临时编译产物（*.aux, *.log, *.pdf 视情况），但不要屏蔽活跃稿件目录；
-   - 整理完成后，检查 main.tex 中的 \\documentclass、\\input 和 \\bibliography 相对路径可正常编译，并汇报最终目录树。`;
+2. 迁移与安全约束：
+   - 对 Git 已跟踪文件优先使用 git mv 保留历史记录；
+   - 保证 main.tex 与各个附属 .tex 文件均可独立编译，且不要在 .gitignore 中屏蔽活跃稿件目录；
+   - 整理完成后汇报最终目录树。`;
+    },
+
+    companionsInitPrompt() {
+      const msPath = this.activeManuscriptPath();
+      return `请读取当前稿件目录（${msPath}）下的 main.tex 及各 sections/*.tex，帮我生成/完善以下独立可编译的投稿附属文档（与主稿同级放置，Rebuttal Sidecar 左侧树会自动识别并支持单独编译与字数检查）：
+
+1. ${msPath}\\title_page.tex（独立 \\documentclass）：
+   - 包含完整论文标题、作者姓名、单位、通讯作者邮箱、Acknowledgments 与 CRediT Authorship Contribution Statement（便于双盲投稿时与匿名主稿分离）。
+2. ${msPath}\\highlights.tex（独立 \\documentclass）：
+   - 使用 \\begin{itemize} ... \\end{itemize} 列出 3~5 条 \\item，严格控制每条 \\item 文本长度不超过 85 个字符（含空格），突出方法创新与核心实验结论。
+3. ${msPath}\\cover_letter.tex（独立 \\documentclass）：
+   - 包含致编辑的投稿/返修说明信，简述本文贡献、主要修改点及利益冲突声明（也可单独拆分为 declaration.tex）。
+
+完成后请保留原有 main.tex 编译不受影响，并告知我已生成的附属文件清单。`;
     },
 
     todoInitPrompt() {
@@ -722,7 +948,9 @@ function sidecarApp() {
         }
 
         const frag = document.createDocumentFragment();
-        const scale = this.viewMode === "split" ? Math.max(0.65, this.zoomScale * 0.72) : this.zoomScale;
+        const scale = this.viewMode === "split" && this.activeDocTarget.type === "main"
+          ? Math.max(0.65, this.zoomScale * 0.72)
+          : this.zoomScale;
         const dpr = Math.min(window.devicePixelRatio || 1, 2);
 
         for (let num = 1; num <= doc.numPages; num++) {
@@ -755,7 +983,10 @@ function sidecarApp() {
 
     onPdfScroll() {
       const stage = document.getElementById("pdf-stage");
-      const canvases = document.querySelectorAll("#single-pdf-container .pdf-page-canvas");
+      const selector = this.activeDocTarget.type === "companion"
+        ? "#companion-pdf-container .pdf-page-canvas"
+        : "#single-pdf-container .pdf-page-canvas";
+      const canvases = document.querySelectorAll(selector);
       if (!stage || !canvases.length) return;
       const mid = stage.scrollTop + stage.clientHeight * 0.3;
       for (const c of canvases) {
@@ -768,7 +999,10 @@ function sidecarApp() {
 
     goToPage(num) {
       const target = Math.max(1, Math.min(this.totalPages || 1, num));
-      const canvas = document.querySelector(`#single-pdf-container .pdf-page-canvas[data-page="${target}"]`);
+      const selector = this.activeDocTarget.type === "companion"
+        ? `#companion-pdf-container .pdf-page-canvas[data-page="${target}"]`
+        : `#single-pdf-container .pdf-page-canvas[data-page="${target}"]`;
+      const canvas = document.querySelector(selector);
       if (canvas) {
         canvas.scrollIntoView({ behavior: "smooth", block: "start" });
         this.currentPage = target;
@@ -788,12 +1022,20 @@ function sidecarApp() {
 
     async adjustZoom(delta) {
       this.zoomScale = Math.max(0.5, Math.min(2.4, Number((this.zoomScale + delta).toFixed(2))));
-      await this.renderCurrentView(true);
+      if (this.activeDocTarget.type === "companion" && this.companionViewMode === "pdf") {
+        await this.renderCompanionPdf(true);
+      } else {
+        await this.renderCurrentView(true);
+      }
     },
 
     async resetZoom() {
       this.zoomScale = 1.15;
-      await this.renderCurrentView(true);
+      if (this.activeDocTarget.type === "companion" && this.companionViewMode === "pdf") {
+        await this.renderCompanionPdf(true);
+      } else {
+        await this.renderCurrentView(true);
+      }
     },
   };
 }
