@@ -10,6 +10,63 @@ from proc_utils import run_cmd
 
 DOCUMENTCLASS_RE = re.compile(r"\\documentclass\b")
 
+COMPANION_ROLES = (
+    (("title_page", "titlepage", "title"), "Title Page"),
+    (("highlight",), "Highlights"),
+    (("cover_letter", "coverletter", "cover"), "Cover Letter"),
+    (("response", "rebuttal", "reply"), "Response Letter"),
+    (("declaration", "conflict", "competing"), "Declaration"),
+    (("credit", "author"), "Author Statement"),
+    (("supplement", "appendix", "si"), "Supplement"),
+)
+COMPANION_TEXT_KEYWORDS = ("title", "highlight", "cover", "response", "rebuttal", "declaration", "credit", "author", "abstract")
+
+
+def classify_companion_role(filename: str) -> str:
+    stem = Path(filename).stem.lower()
+    for keys, label in COMPANION_ROLES:
+        if any(k in stem for k in keys):
+            return label
+    return "Companion"
+
+
+def scan_companion_files(manuscript_dir: Path, entry_tex_name: str) -> list[dict]:
+    """Discover non-main companion files (title page, highlights, cover letter, etc.)."""
+    if not manuscript_dir.is_dir():
+        return []
+
+    companions: list[dict] = []
+    for item in sorted(manuscript_dir.iterdir(), key=lambda p: p.name.lower()):
+        if not item.is_file() or item.name.startswith(".") or item.name == entry_tex_name:
+            continue
+        suffix = item.suffix.lower()
+        if suffix == ".tex":
+            try:
+                text = item.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            if any(DOCUMENTCLASS_RE.search(_strip_tex_comment(line)) for line in text.splitlines()):
+                companions.append(
+                    {
+                        "name": item.name,
+                        "role": classify_companion_role(item.name),
+                        "compilable": True,
+                        "kind": "tex",
+                    }
+                )
+        elif suffix in (".md", ".txt"):
+            stem = item.stem.lower()
+            if any(k in stem for k in COMPANION_TEXT_KEYWORDS):
+                companions.append(
+                    {
+                        "name": item.name,
+                        "role": classify_companion_role(item.name),
+                        "compilable": False,
+                        "kind": "text",
+                    }
+                )
+    return companions
+
 
 @dataclass(frozen=True)
 class WorkspacePaths:
@@ -132,6 +189,7 @@ def scan_workspace(path_str: str) -> dict:
                     "path": str(ws.single_manuscript),
                     "entry_tex": entry.name,
                     "has_todo": (ws.single_manuscript / ".rebuttal_todo.json").is_file(),
+                    "companions": scan_companion_files(ws.single_manuscript, entry.name),
                 }
             )
     else:
@@ -149,6 +207,7 @@ def scan_workspace(path_str: str) -> dict:
                     "path": str(sub),
                     "entry_tex": entry.name,
                     "has_todo": (sub / ".rebuttal_todo.json").is_file(),
+                    "companions": scan_companion_files(sub, entry.name),
                 }
             )
 

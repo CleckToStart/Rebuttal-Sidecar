@@ -5,6 +5,7 @@ from __future__ import annotations
 import difflib
 import hashlib
 import io
+import json
 import os
 import re
 import shlex
@@ -260,10 +261,41 @@ def _backfill_missing_assets(old_dir: Path, build_diff: Path) -> None:
             shutil.copy2(src, dst)
 
 
-def prepare_sandbox(ws: WorkspacePaths, manuscript_name: str, entry_stem: str = "") -> SandboxPaths:
-    """Prepare isolated temp sandbox directories preserving ../references.bib paths."""
+def _sandbox_root(ws: WorkspacePaths, manuscript_name: str) -> Path:
     ws_hash = hashlib.sha1(str(ws.manuscripts_dir).encode("utf-8")).hexdigest()[:12]
-    root = Path(tempfile.gettempdir()) / "rebuttal_sidecar" / ws_hash / manuscript_name
+    base = Path(os.environ.get("LOCALAPPDATA") or tempfile.gettempdir()) / "RebuttalSidecar" / "cache"
+    return base / ws_hash / manuscript_name
+
+
+def _sync_shared_files(ws: WorkspacePaths, root: Path) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    for item in ws.manuscripts_dir.iterdir():
+        if item.is_file() and item.suffix.lower() in SHARED_SUFFIXES:
+            shutil.copy2(item, root / item.name)
+
+
+def _load_compile_meta(root: Path) -> dict:
+    meta_path = root / "compile_meta.json"
+    if not meta_path.is_file():
+        return {}
+    try:
+        raw = json.loads(meta_path.read_text(encoding="utf-8"))
+        return raw if isinstance(raw, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _save_compile_meta(root: Path, meta: dict) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    meta_path = root / "compile_meta.json"
+    tmp_path = root / "compile_meta.json.tmp"
+    tmp_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(tmp_path, meta_path)
+
+
+def prepare_sandbox(ws: WorkspacePaths, manuscript_name: str, entry_stem: str = "") -> SandboxPaths:
+    """Prepare isolated cache sandbox directories preserving ../references.bib paths."""
+    root = _sandbox_root(ws, manuscript_name)
     old_dir = root / "old"
     new_dir = root / "new"
     build_clean = root / "build_clean"
@@ -273,11 +305,7 @@ def prepare_sandbox(ws: WorkspacePaths, manuscript_name: str, entry_stem: str = 
     old_dir.mkdir(parents=True, exist_ok=True)
     new_dir.mkdir(parents=True, exist_ok=True)
 
-    # Sync shared files (e.g. docs/manuscripts/references.bib) to sandbox root so ../references.bib resolves.
-    for item in ws.manuscripts_dir.iterdir():
-        if item.is_file() and item.suffix.lower() in SHARED_SUFFIXES:
-            shutil.copy2(item, root / item.name)
-
+    _sync_shared_files(ws, root)
     manuscript_dir = ws.manuscripts_dir / manuscript_name
     _sync_manuscript_to_build(manuscript_dir, build_clean, entry_stem=entry_stem)
     _sync_manuscript_to_build(manuscript_dir, build_diff, entry_stem=entry_stem)
@@ -602,19 +630,135 @@ def compile_tex_file(
     return pdf_path
 
 
+def _existing_companion_pdfs(raw_map: dict | None) -> dict[str, str]:
+    if not isinstance(raw_map, dict):
+        return {}
+    return {k: str(v) for k, v in raw_map.items() if isinstance(v, str) and Path(v).is_file()}
+
+
+def _hydrate_from_disk(ws: WorkspacePaths, manuscript_name: str) -> dict | None:
+    """Restore previously compiled PDFs from persistent cache or pre-built host PDFs."""
+    manuscript_dir = ws.manuscripts_dir / manuscript_name
+    if not manuscript_dir.is_dir():
+        return None
+    root = _sandbox_root(ws, manuscript_name)
+    meta = _load_compile_meta(root)
+
+    clean_pdf = meta.get("clean_pdf", "")
+    if not clean_pdf or not Path(clean_pdf).is_file():
+        clean_pdf = ""
+        entry_tex = find_entry_tex(manuscript_dir)
+        if entry_tex:
+            prebuilt = manuscript_dir / f"{entry_tex.stem}.pdf"
+            if prebuilt.is_file():
+                cached_clean = root / "build_clean" / "clean.pdf"
+                cached_clean.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(prebuilt, cached_clean)
+                clean_pdf = str(cached_clean)
+
+    diff_pdf = meta.get("diff_pdf", "")
+    if not diff_pdf or not Path(diff_pdf).is_file():
+        diff_pdf = ""
+
+    companions = _existing_companion_pdfs(meta.get("companion_pdfs"))
+    for tex in manuscript_dir.glob("*.tex"):
+        if tex.name not in companions:
+            prebuilt_comp = manuscript_dir / f"{tex.stem}.pdf"
+            entry_tex = find_entry_tex(manuscript_dir)
+            if prebuilt_comp.is_file() and (not entry_tex or tex.name != entry_tex.name):
+                cached_comp = root / "build_companions" / f"{tex.stem}.pdf"
+                cached_comp.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(prebuilt_comp, cached_comp)
+                companions[tex.name] = str(cached_comp)
+
+    if not clean_pdf and not diff_pdf and not companions:
+        return None
+
+    is_dirty = False
+    if clean_pdf:
+        pdf_mtime = Path(clean_pdf).stat().st_mtime
+        src_mtimes = [
+            p.stat().st_mtime
+            for p in manuscript_dir.rglob("*")
+            if p.is_file() and p.suffix.lower() in {".tex", ".bib", ".cls", ".sty"}
+        ]
+        if src_mtimes and max(src_mtimes) > pdf_mtime + 1.0:
+            is_dirty = True
+
+    return {
+        "manuscript": manuscript_name,
+        "state": "success",
+        "dirty": is_dirty,
+        "engine": meta.get("engine", "cached"),
+        "has_clean": bool(clean_pdf),
+        "has_diff": bool(diff_pdf),
+        "clean_pdf": clean_pdf,
+        "diff_pdf": diff_pdf,
+        "companion_pdfs": companions,
+        "compiling_target": "",
+        "errors": [],
+        "log_tail": "",
+        "message": "Loaded cached PDF",
+        "compiled_at": meta.get("compiled_at", ""),
+    }
+
+
 def run_compile_job(
     ws: WorkspacePaths,
     manuscript_name: str,
     baseline: dict | None,
     preferred_engine: str = "auto",
     compiler_settings: dict | None = None,
+    target_tex: str = "",
 ) -> dict:
-    """Execute full sandbox preparation, Clean PDF build, and optional Diff PDF build."""
+    """Execute full sandbox preparation, Clean/Diff PDF build, or companion .tex build."""
     settings = {**DEFAULT_COMPILER_SETTINGS, **(compiler_settings or {})}
     manuscript_dir = ws.manuscripts_dir / manuscript_name
     entry_tex = find_entry_tex(manuscript_dir)
     if not entry_tex:
         raise CompileError(f"No \\documentclass entry file found in {manuscript_name}.")
+
+    root = _sandbox_root(ws, manuscript_name)
+    prev_meta = _load_compile_meta(root)
+    companions = _existing_companion_pdfs(prev_meta.get("companion_pdfs"))
+
+    if target_tex and target_tex != entry_tex.name:
+        comp_src = (manuscript_dir / target_tex).resolve()
+        if not comp_src.is_file() or comp_src.parent != manuscript_dir.resolve():
+            raise CompileError(f"Companion TeX file not found: {target_tex}")
+        _sync_shared_files(ws, root)
+        build_dir = root / "build_companions" / comp_src.stem
+        _sync_manuscript_to_build(manuscript_dir, build_dir, entry_stem=comp_src.stem)
+        comp_text = flatten_tex(comp_src, manuscript_dir)
+        engine = detect_tex_engine(
+            comp_text,
+            preferred=preferred_engine,
+            default_engine=settings.get("default_engine", "auto"),
+        )
+        built_pdf = compile_tex_file(build_dir / comp_src.name, engine, settings)
+        out_pdf = root / "build_companions" / f"{comp_src.stem}.pdf"
+        out_pdf.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(built_pdf, out_pdf)
+        companions[target_tex] = str(out_pdf)
+
+        clean_pdf_str = prev_meta.get("clean_pdf", "")
+        if not clean_pdf_str or not Path(clean_pdf_str).is_file():
+            clean_pdf_str = ""
+        diff_pdf_str = prev_meta.get("diff_pdf", "")
+        if not diff_pdf_str or not Path(diff_pdf_str).is_file():
+            diff_pdf_str = ""
+        compiled_at = _utc_now_iso()
+        result = {
+            "manuscript": manuscript_name,
+            "engine": engine,
+            "baseline": prev_meta.get("baseline", baseline),
+            "clean_pdf": clean_pdf_str,
+            "diff_pdf": diff_pdf_str,
+            "companion_pdfs": companions,
+            "compiled_at": compiled_at,
+        }
+        _save_compile_meta(root, result)
+        return result
 
     sandbox = prepare_sandbox(ws, manuscript_name, entry_stem=entry_tex.stem)
     flat_new_text = flatten_tex(entry_tex, manuscript_dir)
@@ -643,26 +787,42 @@ def run_compile_job(
             diff_pdf = compile_tex_file(diff_tex, engine, settings)
         except CompileError as exc:
             exc.clean_pdf = str(clean_pdf)
+            _save_compile_meta(
+                root,
+                {
+                    "manuscript": manuscript_name,
+                    "engine": engine,
+                    "baseline": baseline,
+                    "clean_pdf": str(clean_pdf),
+                    "diff_pdf": "",
+                    "companion_pdfs": companions,
+                    "compiled_at": _utc_now_iso(),
+                },
+            )
             raise
 
-    return {
+    result = {
         "manuscript": manuscript_name,
         "engine": engine,
         "baseline": baseline,
         "clean_pdf": str(clean_pdf),
         "diff_pdf": str(diff_pdf) if diff_pdf else "",
+        "companion_pdfs": companions,
         "compiled_at": _utc_now_iso(),
     }
+    _save_compile_meta(root, result)
+    return result
 
 
 class CompileCoordinator:
-    """Single-worker background compile queue with latest-wins coalescing."""
+    """Single-worker background compile queue with latest-wins coalescing and dedup lock."""
 
     def __init__(self, on_event: Callable[[str, dict], None] | None = None) -> None:
         self._on_event = on_event
         self._lock = threading.RLock()
         self._cond = threading.Condition(self._lock)
         self._pending_job: dict | None = None
+        self._active_key: tuple[str, str] | None = None
         self._stopped = False
         self._statuses: dict[str, dict] = {}
         self._worker = threading.Thread(target=self._loop, name="compile-worker", daemon=True)
@@ -682,16 +842,25 @@ class CompileCoordinator:
             "has_diff": False,
             "clean_pdf": "",
             "diff_pdf": "",
+            "companion_pdfs": {},
+            "compiling_target": "",
             "errors": [],
             "log_tail": "",
             "message": "",
             "compiled_at": "",
         }
 
-    def get_status(self, manuscript_name: str) -> dict:
+    def get_status(self, manuscript_name: str, ws: WorkspacePaths | None = None) -> dict:
         with self._lock:
             current = self._statuses.get(manuscript_name)
-            return dict(current) if current else self._default_status(manuscript_name)
+            if current:
+                return dict(current)
+            if ws is not None and manuscript_name:
+                hydrated = _hydrate_from_disk(ws, manuscript_name)
+                if hydrated:
+                    self._statuses[manuscript_name] = hydrated
+                    return dict(hydrated)
+            return self._default_status(manuscript_name)
 
     def mark_dirty(self, manuscript_name: str, changed_file: str = "") -> None:
         with self._lock:
@@ -708,16 +877,40 @@ class CompileCoordinator:
         baseline: dict | None,
         preferred_engine: str,
         compiler_settings: dict,
-    ) -> None:
+        target_tex: str = "",
+    ) -> dict:
+        target_key = target_tex or "main"
         with self._lock:
+            current = self._statuses.get(manuscript_name)
+            if current and current.get("state") == "compiling":
+                if self._active_key == (manuscript_name, target_key) and self._pending_job is None:
+                    return dict(current)
+                if self._pending_job and (
+                    self._pending_job["manuscript_name"] == manuscript_name
+                    and (self._pending_job.get("target_tex") or "main") == target_key
+                ):
+                    return dict(current)
+
+            prev = dict(current or self._default_status(manuscript_name))
+            prev.update(
+                {
+                    "state": "compiling",
+                    "compiling_target": target_key,
+                    "errors": [],
+                    "message": "Compiling...",
+                }
+            )
+            self._statuses[manuscript_name] = prev
             self._pending_job = {
                 "ws": ws,
                 "manuscript_name": manuscript_name,
                 "baseline": baseline,
                 "preferred_engine": preferred_engine,
                 "compiler_settings": dict(compiler_settings),
+                "target_tex": target_tex,
             }
             self._cond.notify()
+            return dict(prev)
 
     def stop(self) -> None:
         with self._lock:
@@ -736,11 +929,20 @@ class CompileCoordinator:
                 self._pending_job = None
 
                 name = job["manuscript_name"]
+                target_tex = job.get("target_tex", "")
+                self._active_key = (name, target_tex or "main")
                 prev = dict(self._statuses.get(name) or self._default_status(name))
-                prev.update({"state": "compiling", "errors": [], "message": "Compiling..."})
+                prev.update(
+                    {
+                        "state": "compiling",
+                        "compiling_target": target_tex or "main",
+                        "errors": [],
+                        "message": "Compiling...",
+                    }
+                )
                 self._statuses[name] = prev
 
-            self._emit("COMPILE_START", {"manuscript": name, "baseline": job["baseline"]})
+            self._emit("COMPILE_START", {"manuscript": name, "baseline": job["baseline"], "target_tex": target_tex})
 
             try:
                 result = run_compile_job(
@@ -749,6 +951,7 @@ class CompileCoordinator:
                     baseline=job["baseline"],
                     preferred_engine=job["preferred_engine"],
                     compiler_settings=job["compiler_settings"],
+                    target_tex=target_tex,
                 )
                 status = {
                     "manuscript": name,
@@ -759,12 +962,15 @@ class CompileCoordinator:
                     "has_diff": bool(result["diff_pdf"]),
                     "clean_pdf": result["clean_pdf"],
                     "diff_pdf": result["diff_pdf"],
+                    "companion_pdfs": result.get("companion_pdfs", {}),
+                    "compiling_target": "",
                     "errors": [],
                     "log_tail": "",
                     "message": "Compile succeeded",
                     "compiled_at": result["compiled_at"],
                 }
                 with self._lock:
+                    self._active_key = None
                     self._statuses[name] = status
                 self._emit("COMPILE_SUCCESS", status)
             except Exception as exc:
@@ -772,12 +978,14 @@ class CompileCoordinator:
                 log_tail = exc.log_tail if isinstance(exc, CompileError) else ""
                 clean_pdf = exc.clean_pdf if isinstance(exc, CompileError) else ""
                 with self._lock:
+                    self._active_key = None
                     prev = dict(self._statuses.get(name) or self._default_status(name))
                     prev.update(
                         {
                             "state": "error",
                             "has_clean": bool(clean_pdf) or prev.get("has_clean", False),
                             "clean_pdf": clean_pdf or prev.get("clean_pdf", ""),
+                            "compiling_target": "",
                             "errors": errors,
                             "log_tail": log_tail,
                             "message": str(exc),

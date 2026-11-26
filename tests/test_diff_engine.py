@@ -170,3 +170,33 @@ def test_compile_coordinator_non_deadlocking_enqueue_and_error(tmp_path: Path) -
         assert "COMPILE_START" in events and "COMPILE_ERROR" in events
     finally:
         coord.stop()
+
+
+def test_persistent_cache_hydrates_clean_and_companion_pdfs(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+    paper = tmp_path / "repo" / "docs" / "manuscripts" / "demo_paper"
+    paper.mkdir(parents=True)
+    (paper / "main.tex").write_text("\\documentclass{article}\n\\begin{document}Main\\end{document}\n", encoding="utf-8")
+    (paper / "highlights.tex").write_text("\\documentclass{article}\n\\begin{document}\\begin{itemize}\\item Key result.\\end{itemize}\\end{document}\n", encoding="utf-8")
+
+    tools = check_toolchain()["tools"]
+    if not tools["pdflatex"]["available"]:
+        return
+
+    ws = resolve_workspace(str(tmp_path / "repo"))
+    res_main = run_compile_job(ws, "demo_paper", None, "pdflatex", {"recipe": "engine_only"})
+    res_hl = run_compile_job(ws, "demo_paper", None, "pdflatex", {"recipe": "engine_only"}, target_tex="highlights.tex")
+    assert Path(res_main["clean_pdf"]).is_file()
+    assert Path(res_hl["companion_pdfs"]["highlights.tex"]).is_file()
+
+    # Brand-new coordinator must hydrate cached PDFs immediately without recompiling
+    from diff_engine import CompileCoordinator
+
+    coord2 = CompileCoordinator()
+    try:
+        st = coord2.get_status("demo_paper", ws=ws)
+        assert st["state"] == "success"
+        assert st["has_clean"] is True
+        assert "highlights.tex" in st["companion_pdfs"]
+    finally:
+        coord2.stop()

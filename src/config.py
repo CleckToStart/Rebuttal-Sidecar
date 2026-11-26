@@ -162,6 +162,7 @@ class AppConfig:
         workspace_path: str,
         manuscript_count: int = 0,
         active_manuscript: str = "",
+        custom_name: str = "",
     ) -> None:
         normalized = str(Path(workspace_path).resolve())
         existing = next(
@@ -169,9 +170,10 @@ class AppConfig:
             None,
         )
         others = [item for item in self.data["workspace_history"] if item["path"].lower() != normalized.lower()]
+        resolved_name = custom_name.strip() or (existing["name"] if existing else (Path(normalized).name or normalized))
         entry = {
             "path": normalized,
-            "name": Path(normalized).name or normalized,
+            "name": resolved_name,
             "last_manuscript": active_manuscript or (existing["last_manuscript"] if existing else ""),
             "manuscript_count": manuscript_count,
             "pinned": bool(existing["pinned"]) if existing else False,
@@ -180,6 +182,19 @@ class AppConfig:
         self.data["last_workspace"] = normalized
         self.data["workspace_history"] = _sort_history([entry, *others])
         self.save()
+
+    def rename_workspace(self, workspace_path: str, new_name: str) -> list[dict]:
+        clean = new_name.strip()
+        if not clean:
+            return self.workspace_history
+        normalized = str(Path(workspace_path).resolve()).lower()
+        for item in self.data["workspace_history"]:
+            if item["path"].lower() == normalized:
+                item["name"] = clean
+                item["updated_at"] = _utc_now_iso()
+                self.save()
+                break
+        return self.workspace_history
 
     def set_workspace(self, workspace_path: str) -> None:
         self.record_workspace(workspace_path)

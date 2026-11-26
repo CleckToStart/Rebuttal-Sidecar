@@ -13,6 +13,7 @@ from typing import Callable
 
 from bottle import Bottle, HTTPResponse, request, response
 
+from companion_templates import COMPANION_TEMPLATES, create_companion_file, read_companion_content
 from config import AppConfig
 from demo_workspace import ensure_demo_workspace
 from diff_engine import CompileCoordinator
@@ -162,7 +163,7 @@ class SidecarApp:
             raise FileNotFoundError(f"Manuscript not found: {name}")
         return target
 
-    def open_workspace(self, path_str: str, emit_event: bool = True) -> dict:
+    def open_workspace(self, path_str: str, emit_event: bool = True, custom_name: str = "") -> dict:
         info = scan_workspace(path_str)
         ws = resolve_workspace(path_str)
         manuscripts = info["manuscripts"]
@@ -179,6 +180,7 @@ class SidecarApp:
             info["project_root"],
             manuscript_count=len(manuscripts),
             active_manuscript=active,
+            custom_name=custom_name,
         )
         compiler = self.config.compiler
         self.watcher.configure(
@@ -209,6 +211,7 @@ class SidecarApp:
         manuscript_name: str,
         baseline: dict | None = ...,
         engine: str | None = None,
+        target_tex: str = "",
     ) -> dict:
         manuscript_dir = self._manuscript_dir(manuscript_name)
         todo_doc = self.todo_mgr.load(manuscript_dir)
@@ -219,14 +222,14 @@ class SidecarApp:
         if not ws:
             raise ValueError("No workspace opened")
 
-        self.coordinator.enqueue(
+        return self.coordinator.enqueue(
             ws=ws,
             manuscript_name=manuscript_name,
             baseline=resolved_baseline,
             preferred_engine=resolved_engine,
             compiler_settings=self.config.compiler,
+            target_tex=target_tex,
         )
-        return self.coordinator.get_status(manuscript_name)
 
     def _register_routes(self) -> None:
         app = self.bottle
@@ -243,12 +246,33 @@ class SidecarApp:
         def post_workspace_open():
             body = request.json or {}
             path_str = str(body.get("path", "")).strip()
+            custom_name = str(body.get("name", "")).strip()
             if not path_str:
                 return _json_response({"error": "Missing workspace path"}, status=400)
             try:
-                return _json_response(self.open_workspace(path_str))
+                return _json_response(self.open_workspace(path_str, custom_name=custom_name))
             except FileNotFoundError as exc:
                 return _json_response({"error": str(exc)}, status=404)
+
+        @app.post("/api/workspace/pick-path")
+        def post_workspace_pick_path():
+            if not self.folder_dialog_fn:
+                return _json_response({"error": "Native folder dialog unavailable in headless mode"}, status=400)
+            try:
+                selected = self.folder_dialog_fn()
+            except Exception as exc:
+                return _json_response({"error": str(exc)}, status=500)
+            if not selected:
+                return _json_response({"cancelled": True})
+            info = scan_workspace(selected)
+            return _json_response(
+                {
+                    "cancelled": False,
+                    "path": info["project_root"],
+                    "suggested_name": Path(info["project_root"]).name or info["project_root"],
+                    "manuscript_count": len(info["manuscripts"]),
+                }
+            )
 
         @app.post("/api/workspace/select")
         def post_workspace_select():
@@ -273,8 +297,11 @@ class SidecarApp:
             path_str = str(body.get("path", "")).strip()
             if not path_str:
                 return _json_response({"error": "Missing workspace path"}, status=400)
-            history = self.config.set_workspace_pinned(path_str, bool(body.get("pinned", False)))
-            return _json_response({"workspace_history": history})
+            if "name" in body:
+                self.config.rename_workspace(path_str, str(body["name"]))
+            if "pinned" in body:
+                self.config.set_workspace_pinned(path_str, bool(body["pinned"]))
+            return _json_response({"workspace_history": self.config.workspace_history})
 
         @app.delete("/api/workspace/history")
         def delete_workspace_history():
@@ -417,14 +444,55 @@ class SidecarApp:
                 return _json_response({"error": str(exc)}, status=500)
             return _json_response({"path": selected or ""})
 
+        @app.get("/api/companions/templates")
+        def get_companion_templates():
+            templates = [
+                {"key": k, "default_filename": v["default_filename"], "label": v["label"]}
+                for k, v in COMPANION_TEMPLATES.items()
+            ]
+            return _json_response({"templates": templates})
+
+        @app.get("/api/companions/content")
+        def get_companion_content():
+            name = request.query.get("manuscript", self.active_manuscript).strip()
+            filename = request.query.get("file", "").strip()
+            try:
+                mdir = self._manuscript_dir(name)
+                return _json_response(read_companion_content(mdir, filename))
+            except (ValueError, FileNotFoundError) as exc:
+                return _json_response({"error": str(exc)}, status=400)
+
+        @app.post("/api/companions")
+        def post_companion():
+            name = request.query.get("manuscript", self.active_manuscript).strip()
+            body = request.json or {}
+            template_key = str(body.get("template", "title_page")).strip()
+            filename = str(body.get("filename", "")).strip()
+            try:
+                mdir = self._manuscript_dir(name)
+                created = create_companion_file(mdir, template_key, filename)
+            except FileExistsError as exc:
+                return _json_response({"error": str(exc)}, status=409)
+            except (ValueError, FileNotFoundError) as exc:
+                return _json_response({"error": str(exc)}, status=400)
+
+            with self._state_lock:
+                root_path = self.workspace_info.get("project_root", "")
+                if root_path:
+                    self.workspace_info = scan_workspace(root_path)
+            ws_payload = self.get_workspace_payload()
+            self.broker.publish("WORKSPACE_UPDATED", ws_payload)
+            return _json_response({"created": created, "workspace": ws_payload}, status=201)
+
         @app.post("/api/compile")
         def post_compile():
             body = request.json or {}
             name = str(body.get("manuscript") or self.active_manuscript).strip()
             baseline = body["baseline"] if "baseline" in body else ...
             engine = body.get("engine")
+            target_tex = str(body.get("target_tex", "")).strip()
             try:
-                status = self.trigger_compile(name, baseline=baseline, engine=engine)
+                status = self.trigger_compile(name, baseline=baseline, engine=engine, target_tex=target_tex)
                 return _json_response(status, status=202)
             except (ValueError, FileNotFoundError) as exc:
                 return _json_response({"error": str(exc)}, status=400)
@@ -432,15 +500,25 @@ class SidecarApp:
         @app.get("/api/compile/status")
         def get_compile_status():
             name = request.query.get("manuscript", self.active_manuscript).strip()
-            return _json_response(self.coordinator.get_status(name))
+            with self._state_lock:
+                ws = self.workspace
+            return _json_response(self.coordinator.get_status(name, ws=ws))
 
         @app.get("/api/pdf/<kind>")
         def get_pdf(kind: str):
-            if kind not in ("clean", "diff"):
+            if kind not in ("clean", "diff", "companion"):
                 return _json_response({"error": "Invalid PDF kind"}, status=400)
             name = request.query.get("manuscript", self.active_manuscript).strip()
-            status = self.coordinator.get_status(name)
-            pdf_str = status["clean_pdf"] if kind == "clean" else status["diff_pdf"]
+            with self._state_lock:
+                ws = self.workspace
+            status = self.coordinator.get_status(name, ws=ws)
+            if kind == "clean":
+                pdf_str = status.get("clean_pdf", "")
+            elif kind == "diff":
+                pdf_str = status.get("diff_pdf", "")
+            else:
+                file_name = request.query.get("file", "").strip()
+                pdf_str = status.get("companion_pdfs", {}).get(file_name, "")
             if not pdf_str or not Path(pdf_str).is_file():
                 return _json_response({"error": f"{kind}.pdf not compiled yet"}, status=404)
             data = Path(pdf_str).read_bytes()

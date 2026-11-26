@@ -195,3 +195,57 @@ def test_workspace_history_remember_manuscript_pin_and_delete(tmp_path: Path) ->
         assert [h["path"] for h in del_res["workspace_history"]] == [str(repo_a.resolve())]
     finally:
         app.stop()
+
+
+def test_custom_project_name_and_companion_endpoints(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+    repo = tmp_path / "raw_dir"
+    paper = repo / "docs" / "manuscripts" / "main_paper"
+    paper.mkdir(parents=True)
+    (paper / "main.tex").write_text("\\documentclass{article}\\begin{document}Hi\\end{document}", encoding="utf-8")
+
+    app = SidecarApp(config=AppConfig(tmp_path / "cfg.json"))
+    port = app.start(port=0)
+    base = f"http://127.0.0.1:{port}"
+    try:
+        # Open with custom name
+        req = urllib.request.Request(
+            f"{base}/api/workspace/open",
+            data=json.dumps({"path": str(repo), "name": "ESWA 2026 返修"}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        ws = json.loads(urllib.request.urlopen(req, timeout=3).read().decode("utf-8"))
+        assert ws["workspace_history"][0]["name"] == "ESWA 2026 返修"
+
+        # Create highlights.tex from template
+        req_comp = urllib.request.Request(
+            f"{base}/api/companions?manuscript=main_paper",
+            data=json.dumps({"template": "highlights"}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        created = json.loads(urllib.request.urlopen(req_comp, timeout=3).read().decode("utf-8"))
+        assert created["created"]["name"] == "highlights.tex"
+        assert any(c["name"] == "highlights.tex" and c["role"] == "Highlights" for c in created["workspace"]["manuscripts"][0]["companions"])
+
+        # Read companion content and bullet stats
+        content = json.loads(
+            urllib.request.urlopen(f"{base}/api/companions/content?manuscript=main_paper&file=highlights.tex", timeout=3)
+            .read()
+            .decode("utf-8")
+        )
+        assert len(content["bullets"]) == 3
+        assert all("chars" in b for b in content["bullets"])
+
+        # Rename workspace in history
+        req_ren = urllib.request.Request(
+            f"{base}/api/workspace/history",
+            data=json.dumps({"path": str(repo), "name": "ESWA Final"}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="PATCH",
+        )
+        ren = json.loads(urllib.request.urlopen(req_ren, timeout=3).read().decode("utf-8"))
+        assert ren["workspace_history"][0]["name"] == "ESWA Final"
+    finally:
+        app.stop()
