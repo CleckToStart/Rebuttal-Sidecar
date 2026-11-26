@@ -1,0 +1,25 @@
+# Virtual environments
+.venv/
+venv/
+
+# Python caches & packaging
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Nuitka / build outputs
+dist/
+build/
+*.build/
+*.dist/
+*.onefile-build/
+
+# IDE & OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
