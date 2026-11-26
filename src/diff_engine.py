@@ -34,10 +34,17 @@ ASSET_DIR_NAMES = {"figures", "figure", "figs", "images", "img", "assets", "plot
 class CompileError(RuntimeError):
     """Raised when baseline extraction, latexdiff, or LaTeX compilation fails."""
 
-    def __init__(self, message: str, errors: list[dict] | None = None, log_tail: str = "") -> None:
+    def __init__(
+        self,
+        message: str,
+        errors: list[dict] | None = None,
+        log_tail: str = "",
+        clean_pdf: str = "",
+    ) -> None:
         super().__init__(message)
         self.errors = errors or []
         self.log_tail = log_tail
+        self.clean_pdf = clean_pdf
 
 
 @dataclass(frozen=True)
@@ -286,34 +293,57 @@ DIF_PREAMBLE = (
     "\\IfFileExists{xcolor.sty}{\\usepackage{xcolor}}{}\n"
     "\\IfFileExists{ulem.sty}{\\usepackage[normalem]{ulem}}{}\n"
     "\\providecommand{\\textcolor}[2]{#2}\n"
-    "\\providecommand{\\uline}[1]{\\underline{#1}}\n"
+    "\\providecommand{\\uline}[1]{#1}\n"
     "\\providecommand{\\sout}[1]{[DEL: #1]}\n"
     "\\providecommand{\\DIFadd}[1]{{\\protect\\textcolor{blue}{\\uline{#1}}}}\n"
     "\\providecommand{\\DIFdel}[1]{{\\protect\\textcolor{red}{\\sout{#1}}}}\n"
 )
 
+_OPAQUE_ENVS = (
+    r"equation\*?|align\*?|gather\*?|multline\*?|flalign\*?|eqnarray\*?"
+    r"|math|displaymath|tabular\*?|tabularx|tabulary|array"
+    r"|matrix|pmatrix|bmatrix|vmatrix|cases"
+    r"|verbatim|lstlisting|minted|tikzpicture|algorithmic"
+)
+_OPAQUE_CMDS = (
+    r"cite[a-zA-Z*]*|[cC]?ref|eqref|autoref|pageref|label"
+    r"|includegraphics|bibliography|bibliographystyle"
+    r"|usepackage|RequirePackage|documentclass|begin|end"
+    r"|vspace\*?|hspace\*?|vskip|hskip|IEEEtriggeratref"
+    r"|pagenumbering|thispagestyle|pagestyle"
+)
+
+# Lossless partition tokenizer: trailing `|.` ensures escaped symbols like `\&` or `\\` are never dropped.
 _TOKEN_RE = re.compile(
-    r"\\begin\{(equation\*?|align\*?|gather\*?|table\*?|figure\*?|tabular\*?|verbatim|lstlisting)\}.*?\\end\{\1\}"
+    rf"(?<!\\)%[^\n]*"
+    rf"|\\begin\{{({_OPAQUE_ENVS})\}}.*?\\end\{{\1\}}"
     r"|\\\[.*?\\\]"
     r"|\$\$.*?\$\$"
-    r"|\$(?:\\.|[^$\n])+\$"
-    r"|\\[a-zA-Z@]+(?:\[[^\]]*\])*(?:\{[^{}]*\})*"
-    r"|%[^\n]*"
+    r"|\\\(.*?\\\)"
+    r"|\$(?:\\.|[^$\\])+\$"
+    rf"|\\(?:{_OPAQUE_CMDS})\b(?:\s*\[[^\]]*\])*(?:\s*\{{[^{{}}]*\}})*"
+    r"|\\(?:[&%$#_])"
+    r"|\\[a-zA-Z@]+\*?"
+    r"|\\[^a-zA-Z@]"
     r"|\n[ \t]*\n+"
     r"|[ \t\r\n]+"
-    r"|[^\s\\$%]+",
+    r"|[^\s\\$%{}&~^_#\[\]]+"
+    r"|.",
     re.DOTALL,
 )
 
+_SAFE_ESCAPES = {r"\&", r"\%", r"\$", r"\#", r"\_"}
+_STRUCTURAL_CHARS = set("{}&~^_#[]\\$%")
+
 
 def _is_structural_token(tok: str) -> bool:
-    return (
-        tok.startswith("\\")
-        or tok.startswith("$")
-        or tok.startswith("%")
-        or "\n\n" in tok
-        or tok.startswith("\n") and tok.strip() == "" and tok.count("\n") >= 2
-    )
+    if not tok:
+        return True
+    if tok in _SAFE_ESCAPES:
+        return False
+    if tok.isspace():
+        return tok.count("\n") >= 2
+    return any(ch in _STRUCTURAL_CHARS for ch in tok)
 
 
 def _wrap_prose_tokens(tokens: list[str], macro: str) -> str:
@@ -402,7 +432,7 @@ def generate_latexdiff(
             output = res.stdout.replace(
                 "\\usepackage[normalem]{ulem}",
                 "\\IfFileExists{ulem.sty}{\\usepackage[normalem]{ulem}}{}\n"
-                "\\providecommand{\\uline}[1]{\\underline{#1}}\n"
+                "\\providecommand{\\uline}[1]{#1}\n"
                 "\\providecommand{\\sout}[1]{[DEL: #1]}",
             )
             diff_tex.write_text(output, encoding="utf-8")
@@ -554,10 +584,14 @@ def run_compile_job(
 
     diff_pdf: Path | None = None
     if baseline and baseline.get("type") in ("git", "archive") and baseline.get("ref"):
-        flat_old = extract_baseline(ws, manuscript_name, baseline, sandbox.old_dir)
-        diff_tex = sandbox.build_diff / "diff.tex"
-        generate_latexdiff(flat_old, flat_new, diff_tex, settings)
-        diff_pdf = compile_tex_file(diff_tex, engine, settings)
+        try:
+            flat_old = extract_baseline(ws, manuscript_name, baseline, sandbox.old_dir)
+            diff_tex = sandbox.build_diff / "diff.tex"
+            generate_latexdiff(flat_old, flat_new, diff_tex, settings)
+            diff_pdf = compile_tex_file(diff_tex, engine, settings)
+        except CompileError as exc:
+            exc.clean_pdf = str(clean_pdf)
+            raise
 
     return {
         "manuscript": manuscript_name,
@@ -684,11 +718,14 @@ class CompileCoordinator:
             except Exception as exc:
                 errors = exc.errors if isinstance(exc, CompileError) else []
                 log_tail = exc.log_tail if isinstance(exc, CompileError) else ""
+                clean_pdf = exc.clean_pdf if isinstance(exc, CompileError) else ""
                 with self._lock:
                     prev = dict(self._statuses.get(name) or self._default_status(name))
                     prev.update(
                         {
                             "state": "error",
+                            "has_clean": bool(clean_pdf) or prev.get("has_clean", False),
+                            "clean_pdf": clean_pdf or prev.get("clean_pdf", ""),
                             "errors": errors,
                             "log_tail": log_tail,
                             "message": str(exc),

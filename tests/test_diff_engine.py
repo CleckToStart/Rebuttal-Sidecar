@@ -48,12 +48,36 @@ def test_detect_tex_engine_and_error_parser() -> None:
 
 
 def test_builtin_tex_diff_highlights_prose_and_preserves_commands() -> None:
-    old_tex = "\\documentclass{article}\n\\begin{document}\nInitial baseline text \\cite{a}.\n\\end{document}\n"
-    new_tex = "\\documentclass{article}\n\\begin{document}\nUpdated rebuttal text \\cite{a}.\n\\end{document}\n"
+    old_tex = (
+        "\\documentclass{article}\n"
+        "\\begin{document}\n"
+        "\\author{Alice\\\\Bob}\n"
+        "Rank \\& Sort improves 50\\% at \\$10 \\cite{a,b}.\n"
+        "\\caption{Score $p$ ($q_i$ in text).}\n"
+        "\\begin{tabular}{ll}A & B\\\\\\end{tabular}\n"
+        "Initial baseline text.\n"
+        "\\end{document}\n"
+    )
+    new_tex = (
+        "\\documentclass{article}\n"
+        "\\begin{document}\n"
+        "\\author{Alice\\\\Bob}\n"
+        "Rank \\& Sort improves 50\\% at \\$10 \\cite{a,b}.\n"
+        "\\caption{Updated score $p$ ($q_i$ in text).}\n"
+        "\\begin{tabular}{ll}A & B\\\\\\end{tabular}\n"
+        "Updated rebuttal text.\n"
+        "\\end{document}\n"
+    )
     diff = builtin_tex_diff(old_tex, new_tex)
     assert "\\DIFdel{" in diff
     assert "\\DIFadd{" in diff
-    assert "\\cite{a}" in diff
+    assert "\\cite{a,b}" in diff
+    assert "Rank \\& Sort" in diff
+    assert "Rank & Sort" not in diff
+    assert "Alice\\\\Bob" in diff
+    assert "50\\% at \\$10" in diff
+    assert "\\begin{tabular}{ll}A & B\\\\\\end{tabular}" in diff
+    assert diff.count("{") == diff.count("}")
     assert "\\IfFileExists{ulem.sty}" in diff
 
 
@@ -75,9 +99,13 @@ def test_end_to_end_sandboxed_clean_and_diff_compilation(tmp_path: Path) -> None
         "@article{smith2024, title={Demo}, author={Smith}, journal={Test}, year={2024}}\n",
         encoding="utf-8",
     )
-    (sections / "intro.tex").write_text("Initial baseline text \\cite{smith2024}.\n", encoding="utf-8")
+    (sections / "intro.tex").write_text(
+        "Rank \\& Sort initial baseline text \\cite{smith2024}.\n",
+        encoding="utf-8",
+    )
     (paper / "main.tex").write_text(
         "\\documentclass{article}\n"
+        "\\author{Author One\\\\Line Two}\n"
         "\\begin{document}\n"
         "\\input{sections/intro}\n"
         "\\bibliographystyle{plain}\n"
@@ -91,7 +119,10 @@ def test_end_to_end_sandboxed_clean_and_diff_compilation(tmp_path: Path) -> None
     run_cmd(["git", "tag", "v1"], cwd=tmp_path)
 
     # Modify section in working tree without polluting paper/ with diff.tex or .aux
-    (sections / "intro.tex").write_text("Updated rebuttal text with new evidence \\cite{smith2024}.\n", encoding="utf-8")
+    (sections / "intro.tex").write_text(
+        "Rank \\& Sort updated rebuttal text with new evidence \\cite{smith2024}.\n",
+        encoding="utf-8",
+    )
 
     ws = resolve_workspace(str(tmp_path))
     result = run_compile_job(
@@ -99,7 +130,7 @@ def test_end_to_end_sandboxed_clean_and_diff_compilation(tmp_path: Path) -> None
         manuscript_name="demo_paper",
         baseline={"type": "git", "ref": "v1"},
         preferred_engine="pdflatex",
-        compiler_settings={"recipe": "engine_bibtex", "compile_timeout": 120},
+        compiler_settings={"recipe": "auto", "compile_timeout": 120},
     )
 
     assert Path(result["clean_pdf"]).is_file()
