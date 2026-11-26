@@ -222,9 +222,12 @@ docs/manuscripts/
 
 | **方法** | **路径**                                 | **功能说明**                                                 |
 | -------- | ---------------------------------------- | ------------------------------------------------------------ |
-| `GET`    | `/api/workspace`                         | 返回当前工作区、最近工程列表、活跃稿件及 `_archive` 基准     |
-| `POST`   | `/api/workspace/open`                    | 切换工作区路径，重绑 Watchdog 监听并持久化                   |
+| `GET`    | `/api/workspace`                         | 返回当前工作区、结构化历史工程列表（含上次稿件与置顶状态）、活跃稿件及 `_archive` 基准 |
+| `POST`   | `/api/workspace/open`                    | 切换工作区路径，自动恢复该工程上次选择的稿件并重绑监听       |
 | `POST`   | `/api/workspace/select`                  | 拉起系统原生文件夹选择框并切换工作区                         |
+| `POST`   | `/api/workspace/demo`                    | 创建并加载示例返修工程                                       |
+| `PATCH`  | `/api/workspace/history`                 | 置顶或取消置顶历史工程条目                                   |
+| `DELETE` | `/api/workspace/history`                 | 从历史工程侧边栏移除指定条目                                 |
 | `GET`    | `/api/baselines?manuscript=<name>`       | 查询指定稿件的 Git Tag / Commit 历史与本地归档基准           |
 | `GET`    | `/api/todos?manuscript=<name>`           | 读取 `.rebuttal_todo.json` 并切换监听上下文                  |
 | `POST`   | `/api/todos?manuscript=<name>`           | 新增审稿意见条目或整体更新                                   |

@@ -25,6 +25,23 @@ async function apiJson(url, options = {}) {
   return data;
 }
 
+function readBoolPref(key, fallback) {
+  try {
+    const val = localStorage.getItem(key);
+    return val === null ? fallback : val === "1";
+  } catch {
+    return fallback;
+  }
+}
+
+function writeBoolPref(key, value) {
+  try {
+    localStorage.setItem(key, value ? "1" : "0");
+  } catch {
+    // Ignore storage errors in restricted contexts.
+  }
+}
+
 function sidecarApp() {
   return {
     workspace: {
@@ -33,6 +50,7 @@ function sidecarApp() {
       manuscripts: [],
       archive_baselines: [],
       recent_workspaces: [],
+      workspace_history: [],
     },
     activeManuscript: "",
     baselines: { archive: [], git: [] },
@@ -67,6 +85,10 @@ function sidecarApp() {
       message: "",
     },
 
+    sidebarExpanded: readBoolPref("rs_sidebar_expanded", true),
+    todoCollapsed: readBoolPref("rs_todo_collapsed", false),
+    historySearch: "",
+
     viewMode: "diff",
     currentPage: 1,
     totalPages: 0,
@@ -78,11 +100,25 @@ function sidecarApp() {
     showWorkspaceModal: false,
     workspaceInputPath: "",
     showTodoModal: false,
-    todoForm: { isEdit: false, id: "", reviewer: "Reviewer #1", summary: "", target_location: "", status: "pending", response_draft: "" },
+    showAdvancedTodoFields: false,
+    todoForm: {
+      isEdit: false,
+      id: "",
+      reviewer: "Reviewer #1",
+      summary: "",
+      target_location: "",
+      status: "pending",
+      response_draft: "",
+    },
     showExportModal: false,
     exportFormat: "md",
     exportContent: "",
     copyFeedback: "",
+    showHelpModal: false,
+    helpTab: "init",
+    showAiTodoPopover: false,
+    _popoverTimer: null,
+    aiCopyTag: "",
     showErrorDrawer: false,
     toastMessage: "",
 
@@ -96,6 +132,16 @@ function sidecarApp() {
       setTimeout(() => {
         if (this.toastMessage === msg) this.toastMessage = "";
       }, 2800);
+    },
+
+    toggleSidebar(next) {
+      this.sidebarExpanded = typeof next === "boolean" ? next : !this.sidebarExpanded;
+      writeBoolPref("rs_sidebar_expanded", this.sidebarExpanded);
+    },
+
+    toggleTodoCollapse() {
+      this.todoCollapsed = !this.todoCollapsed;
+      writeBoolPref("rs_todo_collapsed", this.todoCollapsed);
     },
 
     connectSSE() {
@@ -152,10 +198,50 @@ function sidecarApp() {
       this._sse = es;
     },
 
-    workspaceName() {
-      if (!this.workspace.project_root) return "打开工程";
-      const parts = this.workspace.project_root.replace(/[/\\]+$/, "").split(/[/\\]/);
-      return parts[parts.length - 1] || this.workspace.project_root;
+    workspaceHistory() {
+      if (Array.isArray(this.workspace.workspace_history) && this.workspace.workspace_history.length > 0) {
+        return this.workspace.workspace_history;
+      }
+      return (this.workspace.recent_workspaces || []).map((p) => ({
+        path: p,
+        name: p.replace(/[/\\]+$/, "").split(/[/\\]/).pop() || p,
+        last_manuscript: "",
+        manuscript_count: 0,
+        pinned: false,
+      }));
+    },
+
+    filteredHistory() {
+      const q = this.historySearch.trim().toLowerCase();
+      const list = this.workspaceHistory();
+      if (!q) return list;
+      return list.filter((i) => i.name.toLowerCase().includes(q) || i.path.toLowerCase().includes(q));
+    },
+
+    isCurrentWorkspace(path) {
+      return Boolean(this.workspace.project_root) && this.workspace.project_root.toLowerCase() === String(path).toLowerCase();
+    },
+
+    historyMeta(item) {
+      if (item.last_manuscript) return `上次: ${item.last_manuscript}`;
+      if (item.manuscript_count > 0) return `${item.manuscript_count} 篇稿件`;
+      return item.path;
+    },
+
+    async togglePinWorkspace(item) {
+      const res = await apiJson("/api/workspace/history", {
+        method: "PATCH",
+        body: JSON.stringify({ path: item.path, pinned: !item.pinned }),
+      });
+      this.workspace.workspace_history = res.workspace_history || [];
+    },
+
+    async removeWorkspaceHistory(item) {
+      const res = await apiJson("/api/workspace/history", {
+        method: "DELETE",
+        body: JSON.stringify({ path: item.path }),
+      });
+      this.workspace.workspace_history = res.workspace_history || [];
     },
 
     async loadWorkspace() {
@@ -196,7 +282,7 @@ function sidecarApp() {
       this.selectedBaselineKey = bl && bl.type && bl.ref ? `${bl.type}:${bl.ref}` : "";
     },
 
-    async openWorkspacePicker() {
+    openWorkspacePicker() {
       if (this.workspace.project_root) {
         this.workspaceInputPath = this.workspace.project_root;
       }
@@ -365,15 +451,17 @@ function sidecarApp() {
       });
     },
 
+    todosVerifiedCount() {
+      return this.todos.filter((t) => t.status === "verified").length;
+    },
+
     todoProgressPercent() {
       if (!this.todos.length) return 0;
-      const done = this.todos.filter((t) => t.status === "verified").length;
-      return Math.round((done / this.todos.length) * 100);
+      return Math.round((this.todosVerifiedCount() / this.todos.length) * 100);
     },
 
     todoProgressText() {
-      const done = this.todos.filter((t) => t.status === "verified").length;
-      return `${done} / ${this.todos.length} 已核验`;
+      return `${this.todosVerifiedCount()} / ${this.todos.length} 已核验`;
     },
 
     statusText(st) {
@@ -397,6 +485,7 @@ function sidecarApp() {
     openTodoModal(item = null) {
       if (item) {
         this.todoForm = { isEdit: true, ...item };
+        this.showAdvancedTodoFields = true;
       } else {
         this.todoForm = {
           isEdit: false,
@@ -407,6 +496,7 @@ function sidecarApp() {
           status: "pending",
           response_draft: "",
         };
+        this.showAdvancedTodoFields = false;
       }
       this.showTodoModal = true;
     },
@@ -439,6 +529,96 @@ function sidecarApp() {
         { method: "DELETE" },
       );
       this.applyTodoDoc(doc);
+    },
+
+    openHelpModal(tab = "init") {
+      this.helpTab = tab;
+      this.showHelpModal = true;
+    },
+
+    openAiTodoPopover(toggle = false) {
+      this.cancelCloseAiTodoPopover();
+      this.showAiTodoPopover = toggle ? !this.showAiTodoPopover : true;
+    },
+
+    scheduleCloseAiTodoPopover() {
+      this.cancelCloseAiTodoPopover();
+      this._popoverTimer = setTimeout(() => {
+        this.showAiTodoPopover = false;
+      }, 220);
+    },
+
+    cancelCloseAiTodoPopover() {
+      if (this._popoverTimer) {
+        clearTimeout(this._popoverTimer);
+        this._popoverTimer = null;
+      }
+    },
+
+    activeManuscriptPath() {
+      const found = (this.workspace.manuscripts || []).find((m) => m.name === this.activeManuscript);
+      return found ? found.path : "<稿件目录>";
+    },
+
+    folderInitPrompt() {
+      const root = this.workspace.project_root || "<你的科研项目根目录>";
+      return `请帮我将当前项目（${root}）中的 LaTeX 论文手稿整理/初始化为 Rebuttal Sidecar 标准目录结构，方便版本对比与返修管理：
+
+1. 目录结构规范：
+   - docs/manuscripts/references.bib          （如存在参考文献库，放在公共目录，稿件内用 \\bibliography{../references} 或本地 references.bib）
+   - docs/manuscripts/_archive/<v1_submitted>/ （保存一版投稿时的原始手稿快照，作为 Diff 对比基准）
+   - docs/manuscripts/<manuscript_name>/       （当前活跃返修稿件）
+     ├── main.tex                              （必须包含 \\documentclass 入口声明）
+     ├── sections/*.tex                        （按章节拆分子文件并用 \\input{sections/...} 引入）
+     ├── figures/                              （图片与矢量 PDF 插图）
+     └── .rebuttal_todo.json                   （返修意见跟踪文件）
+2. 迁移约束：
+   - 对 Git 已跟踪文件优先使用 git mv，保留历史提交记录；
+   - 确保 .gitignore 忽略临时编译产物（*.aux, *.log, *.pdf 视情况），但不要屏蔽活跃稿件目录；
+   - 整理完成后，检查 main.tex 中的 \\documentclass、\\input 和 \\bibliography 相对路径可正常编译，并汇报最终目录树。`;
+    },
+
+    todoInitPrompt() {
+      const msName = this.activeManuscript || "main_manuscript";
+      const msPath = this.activeManuscriptPath();
+      return `请读取我提供的审稿意见以及当前论文目录（${msPath}）下的 .tex 源码，按以下规范初始化/更新该稿件的返修任务文件：
+
+1. 目标保存路径（必须严格写入此路径）：
+   ${msPath}\\.rebuttal_todo.json
+2. JSON 数据格式规范：
+   {
+     "manuscript": "${msName}",
+     "active_baseline": null,
+     "engine": "auto",
+     "items": [
+       {
+         "id": "R1-C1",
+         "reviewer": "Reviewer #1",
+         "summary": "简明概括该条审稿意见的核心要求",
+         "target_location": "Section 3.2 (sections/method.tex, 第2段), Page 4",
+         "status": "pending",
+         "response_draft": "",
+         "updated_at": "2026-11-26T15:00:00Z"
+       }
+     ]
+   }
+3. 段落关联与状态规则：
+   - 必须检索论文 .tex 文件，把每条意见尽可能精确落实到具体章节、子文件与段落/公式/图表（写入 target_location，如包含 Page N 界面可直接跳页）；
+   - 新录入意见 status 设为 "pending"；当你完成对应 .tex 修改并撰写 response_draft 后，再将 status 更新为 "agent_done"；
+   - 仅修改 .rebuttal_todo.json，无需手工编译，Rebuttal Sidecar 会自动实时同步看板。`;
+    },
+
+    async copyAiPrompt(text, tag) {
+      try {
+        await navigator.clipboard.writeText(text);
+        this.aiCopyTag = tag;
+        this.showToast("提示词已复制到剪贴板");
+        setTimeout(() => {
+          if (this.aiCopyTag === tag) this.aiCopyTag = "";
+        }, 1800);
+      } catch {
+        this.showToast("复制失败，请手动选中文本框复制");
+      }
     },
 
     async openExportModal() {
