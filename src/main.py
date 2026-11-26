@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+import os
 import sys
 import time
 from ctypes import wintypes
@@ -193,6 +194,11 @@ def _configure_seamless_winforms(win, icon_path: Path) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    if sys.stdout is None:
+        sys.stdout = open(os.devnull, "w", encoding="utf-8")
+    if sys.stderr is None:
+        sys.stderr = open(os.devnull, "w", encoding="utf-8")
+
     parser = argparse.ArgumentParser(description="Rebuttal Sidecar — Local LaTeX Rebuttal Companion")
     parser.add_argument("workspace", nargs="?", default="", help="Project root or docs/manuscripts directory")
     parser.add_argument("--headless", action="store_true", help="Run local HTTP/SSE server without PyWebView window")
