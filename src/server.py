@@ -166,14 +166,20 @@ class SidecarApp:
         info = scan_workspace(path_str)
         ws = resolve_workspace(path_str)
         manuscripts = info["manuscripts"]
-        active = manuscripts[0]["name"] if manuscripts else ""
+        remembered = self.config.get_last_manuscript(info["project_root"])
+        names = [m["name"] for m in manuscripts]
+        active = remembered if remembered in names else (names[0] if names else "")
 
         with self._state_lock:
             self.workspace = ws
             self.workspace_info = info
             self.active_manuscript = active
 
-        self.config.set_workspace(info["project_root"])
+        self.config.record_workspace(
+            info["project_root"],
+            manuscript_count=len(manuscripts),
+            active_manuscript=active,
+        )
         compiler = self.config.compiler
         self.watcher.configure(
             manuscripts_dir=ws.manuscripts_dir,
@@ -195,6 +201,7 @@ class SidecarApp:
             **info,
             "active_manuscript": active,
             "recent_workspaces": self.config.recent_workspaces,
+            "workspace_history": self.config.workspace_history,
         }
 
     def trigger_compile(
@@ -260,6 +267,24 @@ class SidecarApp:
             demo_root = ensure_demo_workspace()
             return _json_response(self.open_workspace(str(demo_root)))
 
+        @app.patch("/api/workspace/history")
+        def patch_workspace_history():
+            body = request.json or {}
+            path_str = str(body.get("path", "")).strip()
+            if not path_str:
+                return _json_response({"error": "Missing workspace path"}, status=400)
+            history = self.config.set_workspace_pinned(path_str, bool(body.get("pinned", False)))
+            return _json_response({"workspace_history": history})
+
+        @app.delete("/api/workspace/history")
+        def delete_workspace_history():
+            body = request.json or {}
+            path_str = str(body.get("path", "")).strip()
+            if not path_str:
+                return _json_response({"error": "Missing workspace path"}, status=400)
+            history = self.config.remove_workspace(path_str)
+            return _json_response({"workspace_history": history})
+
         @app.get("/api/baselines")
         def get_baselines():
             name = request.query.get("manuscript", "").strip()
@@ -280,6 +305,9 @@ class SidecarApp:
                 return _json_response({"error": str(exc)}, status=400)
             with self._state_lock:
                 self.active_manuscript = name
+                root_path = self.workspace_info.get("project_root", "")
+            if root_path:
+                self.config.set_last_manuscript(root_path, name)
             self.watcher.set_active_manuscript(name)
             return _json_response(self.todo_mgr.load(mdir))
 

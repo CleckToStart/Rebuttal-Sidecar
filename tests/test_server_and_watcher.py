@@ -139,3 +139,59 @@ def test_demo_workspace_endpoint(tmp_path: Path, monkeypatch) -> None:
         assert len(payload["manuscripts"]) == 1
     finally:
         app.stop()
+
+
+def test_workspace_history_remember_manuscript_pin_and_delete(tmp_path: Path) -> None:
+    repo_a = tmp_path / "repo_a"
+    for name in ("paper1", "paper2"):
+        p = repo_a / "docs" / "manuscripts" / name
+        p.mkdir(parents=True)
+        (p / "main.tex").write_text("\\documentclass{article}\\begin{document}Hi\\end{document}", encoding="utf-8")
+
+    repo_b = tmp_path / "repo_b"
+    pb = repo_b / "docs" / "manuscripts" / "paper_b"
+    pb.mkdir(parents=True)
+    (pb / "main.tex").write_text("\\documentclass{article}\\begin{document}B\\end{document}", encoding="utf-8")
+
+    cfg = AppConfig(path=tmp_path / "cfg.json")
+    app = SidecarApp(config=cfg, initial_workspace=str(repo_a))
+    port = app.start(port=0)
+    base = f"http://127.0.0.1:{port}"
+    try:
+        # Select paper2 in repo_a
+        urllib.request.urlopen(f"{base}/api/todos?manuscript=paper2", timeout=3).read()
+
+        # Switch to repo_b, then back to repo_a and verify paper2 is remembered
+        for target in (repo_b, repo_a):
+            req = urllib.request.Request(
+                f"{base}/api/workspace/open",
+                data=json.dumps({"path": str(target)}).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            payload = json.loads(urllib.request.urlopen(req, timeout=3).read().decode("utf-8"))
+        assert payload["active_manuscript"] == "paper2"
+        assert len(payload["workspace_history"]) == 2
+
+        # Pin repo_b so it moves ahead of repo_a
+        req_pin = urllib.request.Request(
+            f"{base}/api/workspace/history",
+            data=json.dumps({"path": str(repo_b), "pinned": True}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="PATCH",
+        )
+        pinned_res = json.loads(urllib.request.urlopen(req_pin, timeout=3).read().decode("utf-8"))
+        assert pinned_res["workspace_history"][0]["path"] == str(repo_b.resolve())
+        assert pinned_res["workspace_history"][0]["pinned"] is True
+
+        # Remove repo_b from history
+        req_del = urllib.request.Request(
+            f"{base}/api/workspace/history",
+            data=json.dumps({"path": str(repo_b)}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="DELETE",
+        )
+        del_res = json.loads(urllib.request.urlopen(req_del, timeout=3).read().decode("utf-8"))
+        assert [h["path"] for h in del_res["workspace_history"]] == [str(repo_a.resolve())]
+    finally:
+        app.stop()

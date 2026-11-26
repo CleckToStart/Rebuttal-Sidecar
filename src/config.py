@@ -5,10 +5,37 @@ from __future__ import annotations
 import json
 import os
 from copy import deepcopy
+from datetime import datetime, timezone
 from pathlib import Path
 
 VALID_ENGINES = ("auto", "xelatex", "pdflatex", "lualatex")
 VALID_RECIPES = ("auto", "latexmk", "engine_bibtex", "engine_biber", "engine_only")
+MAX_HISTORY = 25
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _sort_history(items: list[dict]) -> list[dict]:
+    pinned = [item for item in items if item.get("pinned")]
+    regular = [item for item in items if not item.get("pinned")]
+    return (pinned + regular)[:MAX_HISTORY]
+
+
+def _normalize_history_item(raw: dict) -> dict | None:
+    path_str = str(raw.get("path", "")).strip()
+    if not path_str:
+        return None
+    p = Path(path_str)
+    return {
+        "path": path_str,
+        "name": str(raw.get("name") or p.name or path_str),
+        "last_manuscript": str(raw.get("last_manuscript", "")),
+        "manuscript_count": max(0, int(raw.get("manuscript_count", 0))),
+        "pinned": bool(raw.get("pinned", False)),
+        "updated_at": str(raw.get("updated_at") or _utc_now_iso()),
+    }
 
 DEFAULT_COMPILER_SETTINGS: dict = {
     "auto_compile": False,
@@ -65,6 +92,7 @@ class AppConfig:
         default = {
             "last_workspace": "",
             "recent_workspaces": [],
+            "workspace_history": [],
             "compiler": dict(DEFAULT_COMPILER_SETTINGS),
         }
         if not self.path.exists():
@@ -74,15 +102,31 @@ class AppConfig:
         except (OSError, json.JSONDecodeError):
             return default
 
-        recent = [str(p) for p in raw.get("recent_workspaces", []) if str(p).strip()]
+        history: list[dict] = []
+        raw_history = raw.get("workspace_history")
+        if isinstance(raw_history, list):
+            for entry in raw_history:
+                if isinstance(entry, dict):
+                    norm = _normalize_history_item(entry)
+                    if norm:
+                        history.append(norm)
+        else:
+            for p in raw.get("recent_workspaces", []):
+                norm = _normalize_history_item({"path": str(p)})
+                if norm:
+                    history.append(norm)
+
+        history = _sort_history(history)
         return {
             "last_workspace": str(raw.get("last_workspace", "")),
-            "recent_workspaces": recent[:10],
+            "recent_workspaces": [item["path"] for item in history][:10],
+            "workspace_history": history,
             "compiler": _normalize_compiler(raw.get("compiler")),
         }
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.data["recent_workspaces"] = [item["path"] for item in self.data["workspace_history"]][:10]
         tmp_path = self.path.with_suffix(".json.tmp")
         tmp_path.write_text(
             json.dumps(self.data, ensure_ascii=False, indent=2),
@@ -100,15 +144,74 @@ class AppConfig:
 
     @property
     def recent_workspaces(self) -> list[str]:
-        return list(self.data["recent_workspaces"])
+        return [item["path"] for item in self.data["workspace_history"][:10]]
+
+    @property
+    def workspace_history(self) -> list[dict]:
+        return deepcopy(self.data["workspace_history"])
+
+    def get_last_manuscript(self, workspace_path: str) -> str:
+        normalized = str(Path(workspace_path).resolve()).lower()
+        for item in self.data["workspace_history"]:
+            if item["path"].lower() == normalized:
+                return item.get("last_manuscript", "")
+        return ""
+
+    def record_workspace(
+        self,
+        workspace_path: str,
+        manuscript_count: int = 0,
+        active_manuscript: str = "",
+    ) -> None:
+        normalized = str(Path(workspace_path).resolve())
+        existing = next(
+            (item for item in self.data["workspace_history"] if item["path"].lower() == normalized.lower()),
+            None,
+        )
+        others = [item for item in self.data["workspace_history"] if item["path"].lower() != normalized.lower()]
+        entry = {
+            "path": normalized,
+            "name": Path(normalized).name or normalized,
+            "last_manuscript": active_manuscript or (existing["last_manuscript"] if existing else ""),
+            "manuscript_count": manuscript_count,
+            "pinned": bool(existing["pinned"]) if existing else False,
+            "updated_at": _utc_now_iso(),
+        }
+        self.data["last_workspace"] = normalized
+        self.data["workspace_history"] = _sort_history([entry, *others])
+        self.save()
 
     def set_workspace(self, workspace_path: str) -> None:
-        normalized = str(Path(workspace_path).resolve())
-        recent = [p for p in self.data["recent_workspaces"] if p.lower() != normalized.lower()]
-        recent.insert(0, normalized)
-        self.data["last_workspace"] = normalized
-        self.data["recent_workspaces"] = recent[:10]
+        self.record_workspace(workspace_path)
+
+    def set_last_manuscript(self, workspace_path: str, manuscript_name: str) -> None:
+        normalized = str(Path(workspace_path).resolve()).lower()
+        for item in self.data["workspace_history"]:
+            if item["path"].lower() == normalized:
+                item["last_manuscript"] = manuscript_name
+                item["updated_at"] = _utc_now_iso()
+                self.save()
+                return
+
+    def set_workspace_pinned(self, workspace_path: str, pinned: bool) -> list[dict]:
+        normalized = str(Path(workspace_path).resolve()).lower()
+        for item in self.data["workspace_history"]:
+            if item["path"].lower() == normalized:
+                item["pinned"] = bool(pinned)
+                break
+        self.data["workspace_history"] = _sort_history(self.data["workspace_history"])
         self.save()
+        return self.workspace_history
+
+    def remove_workspace(self, workspace_path: str) -> list[dict]:
+        normalized = str(Path(workspace_path).resolve()).lower()
+        self.data["workspace_history"] = [
+            item for item in self.data["workspace_history"] if item["path"].lower() != normalized
+        ]
+        if self.data["last_workspace"].lower() == normalized:
+            self.data["last_workspace"] = self.data["workspace_history"][0]["path"] if self.data["workspace_history"] else ""
+        self.save()
+        return self.workspace_history
 
     def update_compiler(self, patch: dict) -> dict:
         combined = dict(self.data["compiler"])
