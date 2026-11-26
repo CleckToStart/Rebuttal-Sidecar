@@ -69,7 +69,7 @@ def which_tool(name: str, compiler_settings: dict | None = None) -> str | None:
     return shutil.which(name, path=env.get("PATH"))
 
 
-MIKTEX_FLAG_TOOLS = {"xelatex", "pdflatex", "lualatex", "latexmk", "latexdiff", "bibtex"}
+MIKTEX_FLAG_TOOLS = {"xelatex", "pdflatex", "lualatex", "latexmk", "latexdiff", "latexdiff-so", "bibtex"}
 
 
 def miktex_installer_flags(exe_path: str | None, compiler_settings: dict | None = None) -> list[str]:
@@ -82,27 +82,45 @@ def miktex_installer_flags(exe_path: str | None, compiler_settings: dict | None 
     return ["--miktex-enable-installer"] if auto_install else ["--miktex-disable-installer"]
 
 
+def _probe_binary(name: str, env: dict[str, str]) -> tuple[bool, str, str]:
+    resolved = shutil.which(name, path=env.get("PATH"))
+    if not resolved:
+        return False, "", ""
+    if miktex_installer_flags(resolved):
+        probe_arg = "-v" if name == "latexmk" else "--version"
+        try:
+            res = run_cmd([resolved, "--miktex-disable-installer", probe_arg], timeout=5, env=env)
+            if res.returncode != 0:
+                return False, resolved, "MiKTeX stub (package not installed)"
+        except (OSError, subprocess.TimeoutExpired):
+            return False, resolved, "MiKTeX probe failed"
+    return True, resolved, ""
+
+
+def resolve_latexdiff(compiler_settings: dict | None = None) -> str | None:
+    """Return a working latexdiff executable, preferring standalone latexdiff-so."""
+    env = build_tex_env(compiler_settings)
+    for candidate in ("latexdiff-so", "latexdiff"):
+        ok, path, _ = _probe_binary(candidate, env)
+        if ok:
+            return path
+    return None
+
+
 def check_toolchain(compiler_settings: dict | None = None) -> dict:
     """Probe availability and resolved paths for TeX, Perl, and Git tools."""
     env = build_tex_env(compiler_settings)
     tools = {}
     for name in TOOLCHAIN_BINARIES:
-        resolved = shutil.which(name, path=env.get("PATH"))
-        available = resolved is not None
-        note = ""
-        if resolved and miktex_installer_flags(resolved):
-            probe_arg = "-v" if name == "latexmk" else "--version"
-            try:
-                res = run_cmd([resolved, "--miktex-disable-installer", probe_arg], timeout=5, env=env)
-                if res.returncode != 0:
-                    available = False
-                    note = "MiKTeX stub (package not installed)"
-            except (OSError, subprocess.TimeoutExpired):
-                available = False
-                note = "MiKTeX probe failed"
+        if name == "latexdiff":
+            ok, resolved, note = _probe_binary("latexdiff-so", env)
+            if not ok:
+                ok, resolved, note = _probe_binary("latexdiff", env)
+        else:
+            ok, resolved, note = _probe_binary(name, env)
         tools[name] = {
-            "available": available,
-            "path": resolved or "",
+            "available": ok,
+            "path": resolved,
             "note": note,
         }
     return {"tools": tools}

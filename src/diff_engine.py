@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Callable
 
 from config import DEFAULT_COMPILER_SETTINGS
-from proc_utils import build_tex_env, miktex_installer_flags, run_cmd, which_tool
+from proc_utils import build_tex_env, miktex_installer_flags, resolve_latexdiff, run_cmd, which_tool
 from scanner import WorkspacePaths, find_entry_tex
 
 INPUT_CMD_RE = re.compile(r"\\(input|include)\s*\{([^}]+)\}")
@@ -27,7 +27,23 @@ XELATEX_PKG_RE = re.compile(r"\\(?:usepackage|documentclass)(?:\[[^\]]*\])?\{[^}
 FILE_LINE_ERR_RE = re.compile(r"^(.+?):(\d+):\s*(.+)$")
 
 SHARED_SUFFIXES = {".bib", ".bst", ".cls", ".sty"}
-SOURCE_SUFFIXES = {".tex", ".bib", ".bst", ".cls", ".sty", ".clo", ".def", ".cfg"}
+BUILD_ARTIFACT_SUFFIXES = {
+    ".aux",
+    ".log",
+    ".out",
+    ".toc",
+    ".lof",
+    ".lot",
+    ".fls",
+    ".fdb_latexmk",
+    ".blg",
+    ".bcf",
+    ".nav",
+    ".snm",
+    ".vrb",
+    ".tmp",
+    ".synctex",
+}
 ASSET_DIR_NAMES = {"figures", "figure", "figs", "images", "img", "assets", "plots"}
 
 
@@ -203,8 +219,20 @@ def _link_or_copy_dir(src: Path, dst: Path) -> None:
     shutil.copytree(src, dst, dirs_exist_ok=True)
 
 
-def _sync_manuscript_to_build(src_dir: Path, build_dir: Path) -> None:
+def _is_build_artifact(path: Path, entry_stem: str = "") -> bool:
+    lower = path.name.lower()
+    if lower in {"clean.pdf", "diff.pdf"} or (entry_stem and lower == f"{entry_stem.lower()}.pdf"):
+        return True
+    if lower.endswith((".synctex.gz", ".run.xml")):
+        return True
+    return path.suffix.lower() in BUILD_ARTIFACT_SUFFIXES
+
+
+def _sync_manuscript_to_build(src_dir: Path, build_dir: Path, entry_stem: str = "") -> None:
     _clear_dir(build_dir)
+    ignore_fn = shutil.ignore_patterns(
+        "*.aux", "*.log", "*.fls", "*.fdb_latexmk", "*.blg", "*.bcf", "*.tmp", "*.synctex.gz", "*.run.xml"
+    )
     for item in src_dir.iterdir():
         if item.name.startswith("."):
             continue
@@ -213,12 +241,26 @@ def _sync_manuscript_to_build(src_dir: Path, build_dir: Path) -> None:
             if item.name.lower() in ASSET_DIR_NAMES:
                 _link_or_copy_dir(item, dst)
             else:
-                shutil.copytree(item, dst, ignore=shutil.ignore_patterns("*.aux", "*.log", "*.pdf", "*.tmp"))
-        elif item.suffix.lower() in SOURCE_SUFFIXES or item.suffix.lower() in {".png", ".jpg", ".jpeg", ".pdf", ".eps"}:
+                shutil.copytree(item, dst, ignore=ignore_fn)
+        elif not _is_build_artifact(item, entry_stem):
             shutil.copy2(item, dst)
 
 
-def prepare_sandbox(ws: WorkspacePaths, manuscript_name: str) -> SandboxPaths:
+def _backfill_missing_assets(old_dir: Path, build_diff: Path) -> None:
+    """Copy assets present in historical baseline but removed/renamed in working tree."""
+    for src in old_dir.rglob("*"):
+        if not src.is_file() or src.suffix.lower() == ".tex" or _is_build_artifact(src):
+            continue
+        rel = src.relative_to(old_dir)
+        if any(part.startswith(".") for part in rel.parts):
+            continue
+        dst = build_diff / rel
+        if not dst.exists():
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+
+
+def prepare_sandbox(ws: WorkspacePaths, manuscript_name: str, entry_stem: str = "") -> SandboxPaths:
     """Prepare isolated temp sandbox directories preserving ../references.bib paths."""
     ws_hash = hashlib.sha1(str(ws.manuscripts_dir).encode("utf-8")).hexdigest()[:12]
     root = Path(tempfile.gettempdir()) / "rebuttal_sidecar" / ws_hash / manuscript_name
@@ -237,8 +279,8 @@ def prepare_sandbox(ws: WorkspacePaths, manuscript_name: str) -> SandboxPaths:
             shutil.copy2(item, root / item.name)
 
     manuscript_dir = ws.manuscripts_dir / manuscript_name
-    _sync_manuscript_to_build(manuscript_dir, build_clean)
-    _sync_manuscript_to_build(manuscript_dir, build_diff)
+    _sync_manuscript_to_build(manuscript_dir, build_clean, entry_stem=entry_stem)
+    _sync_manuscript_to_build(manuscript_dir, build_diff, entry_stem=entry_stem)
     return SandboxPaths(root=root, old_dir=old_dir, new_dir=new_dir, build_clean=build_clean, build_diff=build_diff)
 
 
@@ -289,14 +331,19 @@ def extract_baseline(ws: WorkspacePaths, manuscript_name: str, baseline: dict, o
     return flat_old
 
 
+# Call \normalem after loading ulem without [normalem] so epstopdf-base does not see leftover \@curroptions.
+_ULEM_SAFE_PREAMBLE = (
+    "\\IfFileExists{ulem.sty}{\\usepackage{ulem}\\normalem}{}\n"
+    "\\providecommand{\\uline}[1]{#1}\n"
+    "\\providecommand{\\uwave}[1]{#1}\n"
+    "\\providecommand{\\sout}[1]{[DEL: #1]}\n"
+)
+
 DIF_PREAMBLE = (
     "\\IfFileExists{xcolor.sty}{\\usepackage{xcolor}}{}\n"
-    "\\IfFileExists{ulem.sty}{\\usepackage[normalem]{ulem}}{}\n"
-    "\\providecommand{\\textcolor}[2]{#2}\n"
-    "\\providecommand{\\uline}[1]{#1}\n"
-    "\\providecommand{\\sout}[1]{[DEL: #1]}\n"
-    "\\providecommand{\\DIFadd}[1]{{\\protect\\textcolor{blue}{\\uline{#1}}}}\n"
-    "\\providecommand{\\DIFdel}[1]{{\\protect\\textcolor{red}{\\sout{#1}}}}\n"
+    + _ULEM_SAFE_PREAMBLE
+    + "\\providecommand{\\DIFadd}[1]{{\\protect\\textcolor{blue}{\\uline{#1}}}}\n"
+    + "\\providecommand{\\DIFdel}[1]{{\\protect\\textcolor{red}{\\sout{#1}}}}\n"
 )
 
 _OPAQUE_ENVS = (
@@ -415,26 +462,30 @@ def generate_latexdiff(
     diff_tex: Path,
     compiler_settings: dict,
 ) -> None:
-    """Generate diff_tex via latexdiff, falling back to builtin_tex_diff if unavailable."""
-    latexdiff_exe = which_tool("latexdiff", compiler_settings)
+    """Generate diff_tex via latexdiff-so/latexdiff, falling back to builtin_tex_diff."""
+    latexdiff_exe = resolve_latexdiff(compiler_settings)
     if latexdiff_exe:
         env = build_tex_env(compiler_settings)
         timeout = int(compiler_settings.get("compile_timeout", 180))
         flags = miktex_installer_flags(latexdiff_exe, compiler_settings)
         res = run_cmd(
-            [latexdiff_exe, *flags, "--encoding=utf8", "--math-markup=coarse", str(flat_old), str(flat_new)],
+            [
+                latexdiff_exe,
+                *flags,
+                "--encoding=utf8",
+                "--math-markup=coarse",
+                "--graphics-markup=none",
+                str(flat_old),
+                str(flat_new),
+            ],
             cwd=diff_tex.parent,
             timeout=timeout,
             env=env,
         )
         if res.returncode == 0 and res.stdout.strip():
-            # Guard ulem package so MiKTeX setups without ulem still compile cleanly.
-            output = res.stdout.replace(
-                "\\usepackage[normalem]{ulem}",
-                "\\IfFileExists{ulem.sty}{\\usepackage[normalem]{ulem}}{}\n"
-                "\\providecommand{\\uline}[1]{#1}\n"
-                "\\providecommand{\\sout}[1]{[DEL: #1]}",
-            )
+            output = res.stdout
+            for needle in ("\\RequirePackage[normalem]{ulem}", "\\usepackage[normalem]{ulem}"):
+                output = output.replace(needle, _ULEM_SAFE_PREAMBLE.rstrip("\n"))
             diff_tex.write_text(output, encoding="utf-8")
             return
 
@@ -565,7 +616,7 @@ def run_compile_job(
     if not entry_tex:
         raise CompileError(f"No \\documentclass entry file found in {manuscript_name}.")
 
-    sandbox = prepare_sandbox(ws, manuscript_name)
+    sandbox = prepare_sandbox(ws, manuscript_name, entry_stem=entry_tex.stem)
     flat_new_text = flatten_tex(entry_tex, manuscript_dir)
     flat_new = sandbox.new_dir / "flat_new.tex"
     flat_new.write_text(flat_new_text, encoding="utf-8")
@@ -586,6 +637,7 @@ def run_compile_job(
     if baseline and baseline.get("type") in ("git", "archive") and baseline.get("ref"):
         try:
             flat_old = extract_baseline(ws, manuscript_name, baseline, sandbox.old_dir)
+            _backfill_missing_assets(sandbox.old_dir, sandbox.build_diff)
             diff_tex = sandbox.build_diff / "diff.tex"
             generate_latexdiff(flat_old, flat_new, diff_tex, settings)
             diff_pdf = compile_tex_file(diff_tex, engine, settings)

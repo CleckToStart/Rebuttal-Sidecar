@@ -78,7 +78,8 @@ def test_builtin_tex_diff_highlights_prose_and_preserves_commands() -> None:
     assert "50\\% at \\$10" in diff
     assert "\\begin{tabular}{ll}A & B\\\\\\end{tabular}" in diff
     assert diff.count("{") == diff.count("}")
-    assert "\\IfFileExists{ulem.sty}" in diff
+    assert "\\IfFileExists{ulem.sty}{\\usepackage{ulem}\\normalem}" in diff
+    assert "\\usepackage[normalem]{ulem}" not in diff
 
 
 def test_end_to_end_sandboxed_clean_and_diff_compilation(tmp_path: Path) -> None:
@@ -99,6 +100,10 @@ def test_end_to_end_sandboxed_clean_and_diff_compilation(tmp_path: Path) -> None
         "@article{smith2024, title={Demo}, author={Smith}, journal={Test}, year={2024}}\n",
         encoding="utf-8",
     )
+    diagrams = paper / "diagrams"
+    diagrams.mkdir()
+    (diagrams / "custom_fig.pdf").write_bytes(b"%PDF-1.4\n")
+    (paper / "metrics.csv").write_text("x,y\n1,2\n", encoding="utf-8")
     (sections / "intro.tex").write_text(
         "Rank \\& Sort initial baseline text \\cite{smith2024}.\n",
         encoding="utf-8",
@@ -135,6 +140,10 @@ def test_end_to_end_sandboxed_clean_and_diff_compilation(tmp_path: Path) -> None
 
     assert Path(result["clean_pdf"]).is_file()
     assert Path(result["diff_pdf"]).is_file()
+    clean_dir = Path(result["clean_pdf"]).parent
+    diff_dir = Path(result["diff_pdf"]).parent
+    assert (clean_dir / "diagrams" / "custom_fig.pdf").is_file()
+    assert (diff_dir / "metrics.csv").is_file()
     # Ensure host manuscript directory remains completely clean (no .aux/.log/diff.tex)
     assert not (paper / "main.aux").exists()
     assert not (paper / "diff.tex").exists()
