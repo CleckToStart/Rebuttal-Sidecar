@@ -34,26 +34,32 @@
           <button class="rail-btn" @click="toggleSidebar(true)" title="展开项目工作区">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
           </button>
-          <button class="rail-btn" :class="{ active: !todoCollapsed }" @click="toggleTodoCollapse()" title="展开/收起审稿意见看板">
+          <button
+            class="rail-btn"
+            :class="{ active: activeWorkbench === 'paper' ? !todoCollapsed : !patentFeedbackCollapsed }"
+            @click="activeWorkbench === 'paper' ? toggleTodoCollapse() : togglePatentFeedbackCollapse()"
+            :title="activeWorkbench === 'paper' ? '展开/收起审稿意见看板' : '展开/收起代理/审查意见看板'"
+          >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></svg>
           </button>
-          <button class="rail-btn" @click="openImportModal()" title="导入项目工程">
+          <button class="rail-btn" @click="activeWorkbench === 'paper' ? openImportModal() : openPatentModal()" :title="activeWorkbench === 'paper' ? '导入项目工程' : '新建或导入专利'">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 11v6m-3-3h6"/></svg>
           </button>
-          <button class="rail-btn" @click="openHelpModal()" title="帮助与 AI 提示词助手">
+          <button class="rail-btn" @click="openHelpModal(activeWorkbench === 'patent' ? 'patent_init' : 'init')" title="帮助与 AI 提示词助手">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 0 1 5 1c0 1.5-2.5 2-2.5 3.5"/><circle cx="12" cy="17" r=".6" fill="currentColor"/></svg>
           </button>
         </div>
       </template>
       <template x-if="!sidebarExpanded">
         <div class="rail-bottom">
-          <button class="rail-btn" @click="openCompilerModal()" title="编译器设置">
+          <button class="rail-btn" @click="activeWorkbench === 'paper' ? openCompilerModal() : openGiteaModal()" :title="activeWorkbench === 'paper' ? '编译器设置' : 'Gitea 同步与年费提醒设置'">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
           </button>
         </div>
       </template>
 
-      <template x-if="sidebarExpanded">
+      <!-- Paper Sidebar Expanded -->
+      <template x-if="sidebarExpanded && activeWorkbench === 'paper'">
         <div style="display:flex;flex-direction:column;gap:10px;height:100%;min-height:0;">
           <div class="sidebar-top-row">
             <div class="brand-glyph brand-glyph-inline" title="Rebuttal Sidecar">
@@ -150,6 +156,93 @@
           </div>
         </div>
       </template>
+
+      <!-- Patent Sidebar Expanded -->
+      <template x-if="sidebarExpanded && activeWorkbench === 'patent'">
+        <div style="display:flex;flex-direction:column;gap:10px;height:100%;min-height:0;">
+          <div class="sidebar-top-row">
+            <div class="brand-glyph brand-glyph-inline" title="Rebuttal Sidecar">
+              <img src="/favicon.svg" alt="" width="22" height="22" />
+            </div>
+            <button class="btn btn-mint btn-sm" style="flex:1;" @click="openPatentModal()">+ 新建/导入专利</button>
+            <button class="mini-icon-btn" @click="toggleSidebar(false)" title="收起侧边栏">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+            </button>
+          </div>
+
+          <div class="sidebar-section-label">
+            <span>专利项目库</span>
+            <span x-text="(patent.patent_history || []).length + ' 项'"></span>
+          </div>
+
+          <div class="history-list">
+            <template x-if="(patent.patent_history || []).length === 0">
+              <div class="empty-hint" style="padding:14px 6px;">暂无专利记录，点击上方「+ 新建/导入专利」开始撰写交底书或跟踪年费。</div>
+            </template>
+
+            <template x-for="item in (patent.patent_history || [])" :key="item.path">
+              <div class="workspace-node">
+                <div
+                  class="history-item"
+                  :class="{ active: isCurrentPatent(item.path) }"
+                  :title="item.path"
+                  @click="openPatentPath(item.path)"
+                >
+                  <div class="history-main">
+                    <div class="history-name">
+                      <span x-show="item.pinned" title="已置顶">★</span>
+                      <span x-text="item.name"></span>
+                    </div>
+                    <div class="history-meta" x-text="patentTypeLabel(item.patent_type) + ' · ' + patentStageLabel(item.stage)"></div>
+                  </div>
+                  <div class="history-ops" @click.stop>
+                    <button class="mini-icon-btn" @click="togglePinPatent(item)" :title="item.pinned ? '取消置顶' : '置顶'">
+                      <span x-text="item.pinned ? '★' : '☆'"></span>
+                    </button>
+                    <button class="mini-icon-btn" @click="requestRemovePatent(item)" title="移除记录">✕</button>
+                  </div>
+                </div>
+
+                <!-- Codex-style Tree inside Active Patent -->
+                <template x-if="isCurrentPatent(item.path) && patent.patent_dir">
+                  <div class="codex-tree">
+                    <div class="tree-group-head">
+                      <span>撰写与定稿</span>
+                      <button class="tree-add-btn" @click="exportPatentDocx()">导出 Word</button>
+                    </div>
+                    <template x-for="doc in (patent.documents || [])" :key="doc.rel_path">
+                      <button
+                        class="tree-item"
+                        :class="{ active: patentMainTab === 'doc' && patentDocRel === doc.rel_path }"
+                        @click="selectPatentDocument(doc.rel_path)"
+                        :title="doc.rel_path"
+                      >
+                        <span class="tree-item-name" x-text="doc.name"></span>
+                        <span class="role-chip" x-text="doc.ext.toUpperCase()"></span>
+                      </button>
+                    </template>
+
+                    <div class="tree-group-head"><span>模块视图</span></div>
+                    <button class="tree-item" :class="{ active: patentMainTab === 'figures' }" @click="patentMainTab = 'figures'">
+                      <span class="tree-item-name">说明书附图与标号</span>
+                      <span class="role-chip" x-text="(patent.figures || []).length + ' 图'"></span>
+                    </button>
+                    <button class="tree-item" :class="{ active: patentMainTab === 'timeline' }" @click="patentMainTab = 'timeline'">
+                      <span class="tree-item-name">生命周期与年费</span>
+                      <span class="role-chip" x-text="patent.schedule?.next_days_left !== null && patent.schedule?.next_days_left !== undefined ? (patent.schedule.next_days_left + ' 天') : patentStageLabel(patent.meta?.stage)"></span>
+                    </button>
+                  </div>
+                </template>
+              </div>
+            </template>
+          </div>
+
+          <div class="sidebar-footer">
+            <button class="btn btn-soft btn-sm" @click="openDemoPatent()">加载示例专利工程</button>
+            <button class="btn btn-soft btn-sm" @click="openHelpModal('patent_init')">✨ AI 专利交底与拆解助手</button>
+          </div>
+        </div>
+      </template>
     </aside>
 
     <!-- Main Column -->
@@ -157,7 +250,20 @@
       <!-- Top Quick-Access Toolbar -->
       <header class="quick-toolbar">
         <div class="toolbar-cluster">
-          <template x-if="workspace.manuscripts.length > 0">
+          <div class="segmented-capsule workbench-switcher" title="切换工作台">
+            <button class="seg-btn" :class="{ active: activeWorkbench === 'paper' }" @click="switchWorkbench('paper')">论文返修</button>
+            <button class="seg-btn" :class="{ active: activeWorkbench === 'patent' }" @click="switchWorkbench('patent')">专利管理</button>
+          </div>
+
+          <template x-if="patentAlerts.length > 0">
+            <button class="alert-pill-btn" @click="jumpToPatentAlert(patentAlerts[0])" :title="patentAlerts[0].patent_name + ' · ' + patentAlerts[0].title">
+              <span>🔔 专利提醒</span>
+              <span class="count-badge" x-text="patentAlerts.length"></span>
+            </button>
+          </template>
+
+          <!-- Paper Controls (Left) -->
+          <template x-if="activeWorkbench === 'paper' && workspace.manuscripts.length > 0">
             <button
               class="btn btn-sm"
               :class="todoCollapsed ? 'btn-soft' : 'btn-indigo'"
@@ -169,11 +275,11 @@
             </button>
           </template>
 
-          <template x-if="workspace.manuscripts.length > 0 && activeDocTarget.type === 'companion'">
+          <template x-if="activeWorkbench === 'paper' && workspace.manuscripts.length > 0 && activeDocTarget.type === 'companion'">
             <button class="btn btn-soft btn-sm" @click="selectMainManuscript(activeManuscript)">← 返回主稿</button>
           </template>
 
-          <template x-if="workspace.manuscripts.length > 0 && activeDocTarget.type === 'main'">
+          <template x-if="activeWorkbench === 'paper' && workspace.manuscripts.length > 0 && activeDocTarget.type === 'main'">
             <select class="pill-select" x-model="activeManuscript" @change="selectMainManuscript(activeManuscript)" title="切换活跃稿件">
               <template x-for="m in workspace.manuscripts" :key="m.name">
                 <option :value="m.name" x-text="'稿件: ' + m.name"></option>
@@ -181,7 +287,7 @@
             </select>
           </template>
 
-          <template x-if="activeManuscript && activeDocTarget.type === 'main'">
+          <template x-if="activeWorkbench === 'paper' && activeManuscript && activeDocTarget.type === 'main'">
             <select class="pill-select" x-model="selectedBaselineKey" @change="onBaselineChanged()" title="选择对比基准">
               <option value="">仅 Clean 净版</option>
               <optgroup label="本地归档 (_archive)" x-show="baselines.archive.length > 0">
@@ -203,7 +309,7 @@
             </select>
           </template>
 
-          <template x-if="activeManuscript">
+          <template x-if="activeWorkbench === 'paper' && activeManuscript">
             <select class="pill-select" x-model="manuscriptEngine" @change="onEngineChanged()" title="LaTeX 编译引擎">
               <option value="auto">Auto 引擎</option>
               <option value="xelatex">XeLaTeX</option>
@@ -211,9 +317,22 @@
               <option value="lualatex">LuaLaTeX</option>
             </select>
           </template>
+
+          <!-- Patent Controls (Left) -->
+          <template x-if="activeWorkbench === 'patent' && patent.patent_dir">
+            <button
+              class="btn btn-sm"
+              :class="patentFeedbackCollapsed ? 'btn-soft' : 'btn-indigo'"
+              @click="togglePatentFeedbackCollapse()"
+              title="展开/收起代理/审查意见看板"
+            >
+              <span>代理/OA意见</span>
+              <span class="count-badge" x-text="patentResolvedCount() + '/' + (patent.feedback?.items || []).length"></span>
+            </button>
+          </template>
         </div>
 
-        <template x-if="activeManuscript && activeDocTarget.type === 'main'">
+        <template x-if="activeWorkbench === 'paper' && activeManuscript && activeDocTarget.type === 'main'">
           <div class="segmented-capsule">
             <button class="seg-btn" :class="{ active: viewMode === 'diff' }" @click="switchViewMode('diff')">Diff 对比</button>
             <button class="seg-btn" :class="{ active: viewMode === 'clean' }" @click="switchViewMode('clean')">Clean 净版</button>
@@ -221,7 +340,7 @@
           </div>
         </template>
 
-        <template x-if="activeManuscript && activeDocTarget.type === 'companion'">
+        <template x-if="activeWorkbench === 'paper' && activeManuscript && activeDocTarget.type === 'companion'">
           <div class="segmented-capsule">
             <template x-if="activeDocTarget.compilable">
               <button class="seg-btn" :class="{ active: companionViewMode === 'pdf' }" @click="switchCompanionViewMode('pdf')">PDF 预览</button>
@@ -230,38 +349,74 @@
           </div>
         </template>
 
+        <template x-if="activeWorkbench === 'patent' && patent.patent_dir">
+          <div class="segmented-capsule">
+            <button class="seg-btn" :class="{ active: patentMainTab === 'doc' }" @click="patentMainTab = 'doc'">文档预览</button>
+            <button class="seg-btn" :class="{ active: patentMainTab === 'diff' }" @click="openPatentDiffTab()">版本 Diff</button>
+            <button class="seg-btn" :class="{ active: patentMainTab === 'figures' }" @click="patentMainTab = 'figures'">附图与标号</button>
+            <button class="seg-btn" :class="{ active: patentMainTab === 'timeline' }" @click="patentMainTab = 'timeline'">时间轴与年费</button>
+          </div>
+        </template>
+
         <div class="toolbar-cluster">
-          <template x-if="activeManuscript">
+          <!-- Paper Controls (Right) -->
+          <template x-if="activeWorkbench === 'paper' && activeManuscript">
             <button class="btn btn-soft btn-sm" @click="openTodoModal()">+ 录入意见</button>
           </template>
-          <template x-if="activeManuscript">
+          <template x-if="activeWorkbench === 'paper' && activeManuscript">
             <button class="btn btn-soft btn-sm" @click="openExportModal()">导出回复信</button>
           </template>
 
-          <label class="toggle-pill" :class="{ active: settings.auto_compile }" title="默认关闭，避免频繁自动编译占用资源">
-            <input type="checkbox" :checked="settings.auto_compile" @change="toggleAutoCompile($event.target.checked)" />
-            <span x-text="settings.auto_compile ? '自动编译: 开' : '自动编译: 关'"></span>
-          </label>
+          <template x-if="activeWorkbench === 'paper'">
+            <label class="toggle-pill" :class="{ active: settings.auto_compile }" title="默认关闭，避免频繁自动编译占用资源">
+              <input type="checkbox" :checked="settings.auto_compile" @change="toggleAutoCompile($event.target.checked)" />
+              <span x-text="settings.auto_compile ? '自动编译: 开' : '自动编译: 关'"></span>
+            </label>
+          </template>
 
-          <span class="status-pill" :class="'status-' + statusBadgeClass()">
-            <span class="spinner" x-show="isCompiling()"></span>
-            <span x-text="statusLabel()"></span>
-          </span>
+          <template x-if="activeWorkbench === 'paper'">
+            <span class="status-pill" :class="'status-' + statusBadgeClass()">
+              <span class="spinner" x-show="isCompiling()"></span>
+              <span x-text="statusLabel()"></span>
+            </span>
+          </template>
 
-          <button
-            class="btn btn-mint btn-sm"
-            :disabled="!canCompileCurrentTarget() || isCompiling()"
-            @click="triggerCompile()"
-          >
-            <span class="spinner" x-show="isCompiling()"></span>
-            <span x-text="isCompiling() ? '正在编译...' : '立即编译'"></span>
-          </button>
+          <template x-if="activeWorkbench === 'paper'">
+            <button
+              class="btn btn-mint btn-sm"
+              :disabled="!canCompileCurrentTarget() || isCompiling()"
+              @click="triggerCompile()"
+            >
+              <span class="spinner" x-show="isCompiling()"></span>
+              <span x-text="isCompiling() ? '正在编译...' : '立即编译'"></span>
+            </button>
+          </template>
 
-          <button class="icon-pill-btn" @click="openCompilerModal()" title="编译器设置与 TeX 安装">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-          </button>
+          <template x-if="activeWorkbench === 'paper'">
+            <button class="icon-pill-btn" @click="openCompilerModal()" title="编译器设置与 TeX 安装">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            </button>
+          </template>
 
-          <button class="btn btn-soft btn-sm" @click="openHelpModal()" title="帮助与 AI 目录/文档提示词">帮助</button>
+          <!-- Patent Controls (Right) -->
+          <template x-if="activeWorkbench === 'patent' && patent.patent_dir">
+            <button class="btn btn-soft btn-sm" @click="openSnapshotModal()">保存快照</button>
+          </template>
+          <template x-if="activeWorkbench === 'patent' && patent.patent_dir">
+            <button class="btn btn-soft btn-sm" @click="syncPatentGitea('push')" :title="patent.remote_url ? ('同步到 ' + patent.remote_url) : '配置并绑定 expwin Gitea'">同步 Gitea</button>
+          </template>
+          <template x-if="activeWorkbench === 'patent' && patent.patent_dir">
+            <button class="btn btn-mint btn-sm" :disabled="isExportingDocx" @click="exportPatentDocx()">
+              <span x-text="isExportingDocx ? '导出中...' : '导出交底书 Word'"></span>
+            </button>
+          </template>
+          <template x-if="activeWorkbench === 'patent'">
+            <button class="icon-pill-btn" @click="openGiteaModal()" title="expwin Gitea 与年费提醒服务设置">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            </button>
+          </template>
+
+          <button class="btn btn-soft btn-sm" @click="openHelpModal(activeWorkbench === 'patent' ? 'patent_init' : 'init')" title="帮助与 AI 助手提示词">帮助</button>
 
           <template x-if="isDesktopShell">
             <div class="win-controls no-drag">
@@ -284,8 +439,8 @@
         </div>
       </header>
 
-      <!-- Workspace Stage -->
-      <div class="bento-stage">
+      <!-- Workspace Stage (Paper Workbench) -->
+      <div class="bento-stage" x-show="activeWorkbench === 'paper'">
         <!-- Empty / Zero-Manuscript Landing -->
         <template x-if="!workspace.project_root || workspace.manuscripts.length === 0">
           <main class="empty-workspace">
@@ -540,6 +695,521 @@
           </main>
         </template>
       </div>
+
+      <!-- Patent Management Stage -->
+      <div class="bento-stage" x-show="activeWorkbench === 'patent'">
+        <template x-if="!patent.patent_dir">
+          <main class="empty-workspace">
+            <div class="empty-card">
+              <div class="empty-hero">
+                <h2>专利撰写、版本管理与年费守护</h2>
+                <p>支持 Markdown 交底书与 AI 协作撰写、标准中文专利 Word (<code>.docx</code>) 一键生成、代理商修订痕迹/批注解析、附图标号一致性检查、本地版本快照 / <code>expwin</code> Gitea 同步，以及国家知识产权局年费自动推算与开机提醒。</p>
+              </div>
+              <div class="empty-actions">
+                <button class="btn btn-indigo" @click="openPatentModal()">+ 新建或导入专利项目</button>
+                <button class="btn btn-mint" @click="openDemoPatent()">加载示例专利工程</button>
+                <button class="btn btn-soft" @click="openHelpModal('patent_init')">✨ AI 交底书提示词</button>
+              </div>
+              <template x-if="(patent.patent_history || []).length > 0">
+                <div class="recent-box">
+                  <div class="recent-title">最近处理的专利</div>
+                  <template x-for="item in (patent.patent_history || []).slice(0, 5)" :key="item.path">
+                    <button class="recent-item" @click="openPatentPath(item.path)" x-text="item.name + ' · ' + item.path"></button>
+                  </template>
+                </div>
+              </template>
+            </div>
+          </main>
+        </template>
+
+        <template x-if="patent.patent_dir">
+          <main class="bento-grid" :class="{ 'kanban-collapsed': patentFeedbackCollapsed }">
+            <!-- Left Collapsible Fuzzy Feedback Panel -->
+            <section class="bento-card kanban-card" x-show="!patentFeedbackCollapsed">
+              <div class="kanban-hero">
+                <div class="kanban-hero-top">
+                  <span class="kanban-hero-title">代理 / 审查模糊意见</span>
+                  <button class="btn btn-white btn-sm" @click="togglePatentFeedbackCollapse()">« 收起</button>
+                </div>
+                <div class="kanban-metric-row">
+                  <div class="kanban-metric" x-text="patentResolvedCount() + ' / ' + (patent.feedback?.items || []).length + ' 已闭环'"></div>
+                  <span class="kanban-pct-badge" x-text="patentFeedbackPct() + '% 完成'"></span>
+                </div>
+                <div class="progress-track">
+                  <div class="progress-fill" :style="'width:' + patentFeedbackPct() + '%'"></div>
+                </div>
+                <div class="kanban-hero-actions">
+                  <button class="btn btn-indigo btn-sm" @click="openRawFeedbackModal()">+ 粘贴模糊原件</button>
+                  <div class="ai-trigger-wrap" @mouseenter="openAiPatentPopover()" @mouseleave="scheduleCloseAiPatentPopover()">
+                    <button class="btn btn-white btn-sm" @click="openAiPatentPopover(true)">✨ AI 拆解</button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Hover AI Fuzzy Feedback Disentangler Popover -->
+              <div
+                class="ai-popover"
+                x-show="showAiPatentPopover"
+                @mouseenter="cancelCloseAiPatentPopover()"
+                @mouseleave="scheduleCloseAiPatentPopover()"
+              >
+                <div class="ai-popover-head">
+                  <strong>让 AI 拆解代理/审查员模糊意见</strong>
+                  <button class="btn btn-mint btn-sm" @click="copyAiPrompt(patentFeedbackPrompt(), 'pat_fb')" x-text="aiCopyTag === 'pat_fb' ? '✓ 已复制' : '复制提示词'"></button>
+                </div>
+                <div class="ai-popover-desc">
+                  专利代理师或审查员的意见往往偏口语/模糊，复制此提示词连同微信记录或 OA 文本发给 AI，会自动写入 <code>.patent_feedback.json</code> 并列出待确认问题：
+                </div>
+                <textarea class="ai-prompt-preview" rows="8" readonly :value="patentFeedbackPrompt()"></textarea>
+              </div>
+
+              <div class="filter-bar">
+                <div class="chip-row">
+                  <button class="chip" :class="{ active: patentSourceFilter === 'ALL' }" @click="patentSourceFilter = 'ALL'">全部</button>
+                  <button class="chip" :class="{ active: patentSourceFilter === 'agent' }" @click="patentSourceFilter = 'agent'">代理师</button>
+                  <button class="chip" :class="{ active: patentSourceFilter === 'examiner' }" @click="patentSourceFilter = 'examiner'">审查员</button>
+                  <button class="chip" :class="{ active: patentSourceFilter === 'need_confirm' }" @click="patentSourceFilter = 'need_confirm'">待确认</button>
+                </div>
+                <div style="display:flex;gap:5px;align-items:center;">
+                  <button class="btn btn-soft btn-sm" @click="openFeedbackItemModal()" title="手动新增一条意见">+ 手动</button>
+                  <button class="btn btn-soft btn-sm" @click="exportPatentReplySheet()" title="导出代理沟通确认单 / OA 回复草稿">确认单</button>
+                </div>
+              </div>
+
+              <template x-if="(patent.feedback?.raw_batches || []).length > 0">
+                <div class="raw-inbox-bar">
+                  <span x-text="'原始收件箱 (' + patent.feedback.raw_batches.length + ' 条模糊记录)'"></span>
+                  <button class="link-btn" @click="showRawInbox = !showRawInbox" x-text="showRawInbox ? '收起' : '查看原文'"></button>
+                </div>
+              </template>
+              <div class="raw-inbox-list" x-show="showRawInbox && (patent.feedback?.raw_batches || []).length > 0">
+                <template x-for="b in (patent.feedback?.raw_batches || [])" :key="b.id">
+                  <div class="raw-batch-card">
+                    <div class="raw-batch-head">
+                      <strong x-text="b.source_label"></strong>
+                      <span x-text="formatTime(b.created_at)"></span>
+                    </div>
+                    <div class="raw-batch-body" x-text="b.raw_text"></div>
+                  </div>
+                </template>
+              </div>
+
+              <div class="todo-list">
+                <template x-if="filteredPatentFeedback().length === 0">
+                  <div class="empty-hint">
+                    暂无结构化意见。<br/>可点击「+ 粘贴模糊原件」、在 Word 预览中「导入批注」，或用「✨ AI 拆解」整理微信/邮件反馈。
+                  </div>
+                </template>
+                <template x-for="item in filteredPatentFeedback()" :key="item.id">
+                  <article class="todo-card" :class="'card-' + patentCardClass(item.status)">
+                    <div class="card-top">
+                      <div class="card-meta">
+                        <span class="id-badge" x-text="item.id"></span>
+                        <span class="rev-tag" x-text="patentSourceLabel(item.source)"></span>
+                        <template x-if="item.target_section">
+                          <span class="loc-tag" x-text="item.target_section"></span>
+                        </template>
+                      </div>
+                      <button class="state-btn" :class="'state-' + patentCardClass(item.status)" @click="cyclePatentFeedbackStatus(item)" x-text="patentStatusText(item.status)"></button>
+                    </div>
+
+                    <template x-if="item.original_fuzzy_note">
+                      <div class="fuzzy-quote" x-text="'原话: ' + item.original_fuzzy_note"></div>
+                    </template>
+                    <div class="card-summary" x-text="item.action_plan"></div>
+                    <template x-if="item.clarification_question">
+                      <div class="clarify-box" x-text="'❓ 待向代理/审查员确认: ' + item.clarification_question"></div>
+                    </template>
+                    <template x-if="item.reply_draft">
+                      <div class="card-draft" x-text="item.reply_draft"></div>
+                    </template>
+
+                    <div class="card-footer">
+                      <span x-text="formatTime(item.updated_at)"></span>
+                      <div>
+                        <button class="link-btn" @click="openFeedbackItemModal(item)">编辑</button>
+                        <button class="link-btn danger" @click="requestDeleteFeedbackItem(item)">删除</button>
+                      </div>
+                    </div>
+                  </article>
+                </template>
+              </div>
+            </section>
+
+            <!-- Right Patent Main Stage Card -->
+            <section class="bento-card">
+              <!-- Tab 1: Document Preview & Markdown Editor -->
+              <template x-if="patentMainTab === 'doc'">
+                <div class="patent-pane">
+                  <div class="viewer-header">
+                    <div class="viewer-title-group">
+                      <span class="viewer-title" x-text="patentDocRel || '未选择文档'"></span>
+                      <span class="viewer-sub" x-text="patentDoc.has_redlines ? '含 Word 修订痕迹与批注高亮' : '支持与 AI 协同编辑交底书并一键导出 .docx'"></span>
+                    </div>
+                    <div class="viewer-controls">
+                      <select class="pill-select" x-model="patentDocRev" @change="loadPatentDocument()">
+                        <option value="">当前工作区</option>
+                        <template x-for="s in (patent.snapshots || [])" :key="s.commit">
+                          <option :value="s.ref" x-text="'快照: ' + s.label"></option>
+                        </template>
+                      </select>
+                      <template x-if="patentDoc.ext === 'docx' && !patentDocRev && (patentDoc.comments || []).length > 0">
+                        <button class="btn btn-mint btn-sm" @click="importDocxComments()" x-text="'导入 ' + patentDoc.comments.length + ' 条批注到看板'"></button>
+                      </template>
+                      <template x-if="patentDoc.ext === 'md' && !patentDocRev">
+                        <button class="btn btn-sm" :class="patentEditingMd ? 'btn-indigo' : 'btn-soft'" @click="togglePatentMdEdit()" x-text="patentEditingMd ? '返回阅读视图' : '快捷编辑 Markdown'"></button>
+                      </template>
+                      <template x-if="patentEditingMd">
+                        <button class="btn btn-mint btn-sm" @click="savePatentMarkdown()">保存修改</button>
+                      </template>
+                    </div>
+                  </div>
+
+                  <div class="patent-scroll-area">
+                    <template x-if="patentEditingMd">
+                      <textarea class="md-editor-area" x-model="patentMdDraft" spellcheck="false"></textarea>
+                    </template>
+
+                    <template x-if="!patentEditingMd">
+                      <div class="doc-reader">
+                        <template x-if="(patentDoc.comments || []).length > 0">
+                          <div class="comments-banner">
+                            <strong>文档批注摘要 (<span x-text="patentDoc.comments.length"></span>)：</strong>
+                            <template x-for="c in patentDoc.comments" :key="c.id">
+                              <div class="comment-pill-item">
+                                <span class="comment-author" x-text="c.author + ':'"></span>
+                                <span x-text="c.text"></span>
+                                <template x-if="c.anchor_text">
+                                  <span class="comment-anchor" x-text="'「' + c.anchor_text + '」'"></span>
+                                </template>
+                              </div>
+                            </template>
+                          </div>
+                        </template>
+
+                        <template x-for="(blk, idx) in (patentDoc.blocks || [])" :key="idx">
+                          <div class="doc-block" :class="'doc-' + blk.type + (blk.level ? (' doc-h' + blk.level) : '')">
+                            <template x-if="blk.type === 'table'">
+                              <table class="doc-table">
+                                <template x-for="(row, ridx) in blk.rows" :key="ridx">
+                                  <tr>
+                                    <template x-for="(cell, cidx) in row" :key="cidx">
+                                      <td :class="{ 'doc-th': ridx === 0 }" x-text="cell"></td>
+                                    </template>
+                                  </tr>
+                                </template>
+                              </table>
+                            </template>
+                            <template x-if="blk.type === 'image' && blk.path">
+                              <div class="doc-inline-figure">
+                                <img :src="'/api/patents/figures/' + encodeURIComponent(blk.path.split('/').pop()) + '?t=' + Date.now()" :alt="blk.alt" />
+                                <div class="doc-fig-cap" x-text="blk.alt"></div>
+                              </div>
+                            </template>
+                            <template x-if="blk.type !== 'table' && !(blk.type === 'image' && blk.path)">
+                              <div>
+                                <template x-for="(seg, sidx) in (blk.segments || [])" :key="sidx">
+                                  <span
+                                    :class="seg.kind === 'ins' ? 'rev-ins' : (seg.kind === 'del' ? 'rev-del' : '')"
+                                    :title="seg.author ? (seg.author + ' ' + (seg.date || '')) : ''"
+                                    x-text="seg.text"
+                                  ></span>
+                                </template>
+                              </div>
+                            </template>
+                          </div>
+                        </template>
+                      </div>
+                    </template>
+                  </div>
+                </div>
+              </template>
+
+              <!-- Tab 2: Cross-Version / File Diff -->
+              <template x-if="patentMainTab === 'diff'">
+                <div class="patent-pane">
+                  <div class="viewer-header">
+                    <div class="viewer-title-group">
+                      <span class="viewer-title">跨版本 / 跨格式差异对比</span>
+                      <span class="viewer-sub">支持比对任意本地/Gitea 快照与当前 Markdown / Word 交底书</span>
+                    </div>
+                    <div class="viewer-controls">
+                      <select class="pill-select" x-model="patentDiffForm.left_rel">
+                        <template x-for="doc in (patent.documents || [])" :key="'l:' + doc.rel_path">
+                          <option :value="doc.rel_path" x-text="'旧版: ' + doc.name"></option>
+                        </template>
+                      </select>
+                      <select class="pill-select" x-model="patentDiffForm.left_rev">
+                        <option value="">工作区</option>
+                        <template x-for="s in (patent.snapshots || [])" :key="'lr:' + s.commit">
+                          <option :value="s.ref" x-text="s.label"></option>
+                        </template>
+                      </select>
+                      <span style="font-size:12px;color:var(--muted);">→</span>
+                      <select class="pill-select" x-model="patentDiffForm.right_rel">
+                        <template x-for="doc in (patent.documents || [])" :key="'r:' + doc.rel_path">
+                          <option :value="doc.rel_path" x-text="'新版: ' + doc.name"></option>
+                        </template>
+                      </select>
+                      <select class="pill-select" x-model="patentDiffForm.right_rev">
+                        <option value="">工作区</option>
+                        <template x-for="s in (patent.snapshots || [])" :key="'rr:' + s.commit">
+                          <option :value="s.ref" x-text="s.label"></option>
+                        </template>
+                      </select>
+                      <button class="btn btn-indigo btn-sm" @click="runPatentDiff()">对比</button>
+                    </div>
+                  </div>
+                  <div class="patent-scroll-area">
+                    <div class="diff-summary-bar" x-show="patentDiffResult.summary">
+                      <span class="diff-stat-add" x-text="'+ 新增 ' + (patentDiffResult.summary?.added || 0) + ' 段'"></span>
+                      <span class="diff-stat-del" x-text="'- 删除 ' + (patentDiffResult.summary?.deleted || 0) + ' 段'"></span>
+                      <span class="diff-stat-chg" x-text="'~ 修改 ' + (patentDiffResult.summary?.changed || 0) + ' 段'"></span>
+                    </div>
+                    <div class="doc-reader">
+                      <template x-for="(blk, idx) in (patentDiffResult.blocks || [])" :key="idx">
+                        <div class="diff-block-row" :class="'diff-op-' + blk.op">
+                          <template x-for="(tok, tidx) in (blk.tokens || [])" :key="tidx">
+                            <span :class="tok.kind === 'insert' ? 'rev-ins' : (tok.kind === 'delete' ? 'rev-del' : '')" x-text="tok.text"></span>
+                          </template>
+                        </div>
+                      </template>
+                    </div>
+                  </div>
+                </div>
+              </template>
+
+              <!-- Tab 3: Figures & Reference Numerals -->
+              <template x-if="patentMainTab === 'figures'">
+                <div class="patent-pane">
+                  <div class="viewer-header">
+                    <div class="viewer-title-group">
+                      <span class="viewer-title">说明书附图与附图标记管理</span>
+                      <span class="viewer-sub">自动校验附图标记（如 101-模块名）在交底书正文中的出现与一致性</span>
+                    </div>
+                    <div class="viewer-controls">
+                      <button class="btn btn-mint btn-sm" @click="importPatentFigure()">+ 导入附图文件</button>
+                      <button class="btn btn-soft btn-sm" @click="refreshNumeralCheck()">刷新标号核查</button>
+                    </div>
+                  </div>
+                  <div class="patent-scroll-area">
+                    <div class="figures-grid">
+                      <template x-for="fig in (patent.figures || [])" :key="fig.filename">
+                        <div class="fig-card">
+                          <div class="fig-thumb" @click="lightboxFigureUrl = '/api/patents/figures/' + encodeURIComponent(fig.filename)">
+                            <img :src="'/api/patents/figures/' + encodeURIComponent(fig.filename) + '?t=' + Date.now()" :alt="fig.caption" />
+                          </div>
+                          <div class="fig-meta">
+                            <div class="fig-head-row">
+                              <strong x-text="'图' + fig.fig_no"></strong>
+                              <span x-text="fig.filename"></span>
+                            </div>
+                            <input type="text" class="fig-caption-input" :value="fig.caption" @change="updateFigureCaption(fig.filename, $event.target.value)" />
+                            <div class="fig-actions">
+                              <button class="btn btn-soft btn-sm" @click="copyFigureMdSnippet(fig)">复制 MD 引用</button>
+                              <button class="btn btn-soft btn-sm" @click="lightboxFigureUrl = '/api/patents/figures/' + encodeURIComponent(fig.filename)">放大查看</button>
+                            </div>
+                          </div>
+                        </div>
+                      </template>
+                    </div>
+
+                    <div class="numeral-panel">
+                      <div class="toolchain-header">
+                        <span>附图标记字典与正文一致性核查</span>
+                        <button class="btn btn-indigo btn-sm" @click="addReferenceNumeral()">+ 添加标号</button>
+                      </div>
+                      <template x-if="(patent.numeral_check?.undeclared || []).length > 0">
+                        <div class="undeclared-warn">
+                          正文中检测到未登记在字典中的标号：<strong x-text="patent.numeral_check.undeclared.join(', ')"></strong>
+                        </div>
+                      </template>
+                      <div class="numeral-list">
+                        <template x-for="(item, idx) in (patentMetaForm.reference_numerals || [])" :key="idx">
+                          <div class="numeral-row">
+                            <input type="text" style="width:90px;" x-model="item.code" placeholder="101" />
+                            <input type="text" style="flex:1;" x-model="item.name" placeholder="对应部件或模块名称" />
+                            <span class="char-badge" :class="numeralStatusClass(item.code)" x-text="numeralStatusText(item.code)"></span>
+                            <button class="mini-icon-btn" @click="removeReferenceNumeral(idx)">✕</button>
+                          </div>
+                        </template>
+                      </div>
+                      <div style="display:flex;justify-content:flex-end;margin-top:8px;">
+                        <button class="btn btn-mint btn-sm" @click="savePatentMeta()">保存标号字典并重新核查</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </template>
+
+              <!-- Tab 4: Lifecycle Timeline, CNIPA Annual Fees & Windows Reminders -->
+              <template x-if="patentMainTab === 'timeline'">
+                <div class="patent-pane">
+                  <div class="viewer-header">
+                    <div class="viewer-title-group">
+                      <span class="viewer-title">专利生命周期、年费推算与桌面定时提醒</span>
+                      <span class="viewer-sub" x-text="patent.schedule?.protection_end_date ? ('保护期届满日: ' + patent.schedule.protection_end_date) : '填写申请日与授权日后自动推算 CNIPA 年费节点'"></span>
+                    </div>
+                    <div class="viewer-controls">
+                      <button class="btn btn-soft btn-sm" @click="testPatentReminder(false)">测试桌面气泡提醒</button>
+                      <button class="btn btn-indigo btn-sm" @click="savePatentMeta()">保存专利信息</button>
+                    </div>
+                  </div>
+
+                  <div class="patent-scroll-area">
+                    <div class="stage-stepper">
+                      <template x-for="st in patentStages" :key="st.key">
+                        <button
+                          class="stage-pill"
+                          :class="{ active: patentMetaForm.stage === st.key }"
+                          @click="patentMetaForm.stage = st.key"
+                          x-text="st.label"
+                        ></button>
+                      </template>
+                    </div>
+
+                    <div class="meta-card-box">
+                      <div class="form-grid">
+                        <div class="form-field form-full">
+                          <label>专利名称</label>
+                          <input type="text" x-model="patentMetaForm.title" />
+                        </div>
+                        <div class="form-field">
+                          <label>专利类型</label>
+                          <select x-model="patentMetaForm.patent_type">
+                            <option value="invention">发明专利（20年）</option>
+                            <option value="utility_model">实用新型（10年）</option>
+                            <option value="design">外观设计（15年）</option>
+                          </select>
+                        </div>
+                        <div class="form-field">
+                          <label>CNIPA 费减比例</label>
+                          <select x-model.number="patentMetaForm.fee_reduction">
+                            <option :value="0">无费减 (全额 100%)</option>
+                            <option :value="70">减缴 70%（实缴 30%）</option>
+                            <option :value="85">减缴 85%（单人/个人 实缴 15%）</option>
+                          </select>
+                        </div>
+                        <div class="form-field">
+                          <label>申请日 (起算年费周年)</label>
+                          <input type="date" x-model="patentMetaForm.filing_date" />
+                        </div>
+                        <div class="form-field">
+                          <label>授权公告日</label>
+                          <input type="date" x-model="patentMetaForm.grant_date" />
+                        </div>
+                        <div class="form-field">
+                          <label>申请号 / 专利号</label>
+                          <input type="text" x-model="patentMetaForm.application_no" placeholder="CN2025..." />
+                        </div>
+                        <div class="form-field">
+                          <label>专利代理机构 / 代理师</label>
+                          <input type="text" x-model="patentMetaForm.agency" placeholder="事务所及对接人" />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div class="meta-card-box">
+                      <div class="toolchain-header">
+                        <span>年费缴费时间表与滞纳预警（按申请日周年推算）</span>
+                        <span class="sub-stat" x-text="patent.schedule?.current_year_index ? ('当前处于第 ' + patent.schedule.current_year_index + ' 年度') : '未填写申请日'"></span>
+                      </div>
+                      <template x-if="(patent.schedule?.fee_schedule || []).length === 0">
+                        <div class="empty-hint" style="padding:10px;">填写「申请日」并将状态设为「授权维持」或填入「授权日」后，系统自动推算各年度 CNIPA 年费与滞纳截止期。</div>
+                      </template>
+                      <div class="fee-list">
+                        <template x-for="row in (patent.schedule?.fee_schedule || [])" :key="row.year">
+                          <div class="fee-row" :class="'fee-' + row.severity">
+                            <div>
+                              <strong x-text="'第 ' + row.year + ' 年度'"></strong>
+                              <span class="fee-date" x-text="'到期: ' + row.due_date + '（滞纳截止: ' + row.grace_end_date + '）'"></span>
+                            </div>
+                            <div class="fee-right">
+                              <span class="fee-amount" x-text="'参考 ¥' + row.estimated_fee"></span>
+                              <span class="char-badge" :class="row.paid ? 'char-ok' : (row.days_left <= 7 ? 'char-over' : '')" x-text="row.paid ? ('已缴 ' + row.paid_at) : (row.days_left < 0 ? ('已逾期 ' + (-row.days_left) + ' 天') : ('剩 ' + row.days_left + ' 天'))"></span>
+                              <template x-if="!row.paid">
+                                <button class="btn btn-mint btn-sm" @click="markPatentFeePaid(row)">登记已缴</button>
+                              </template>
+                            </div>
+                          </div>
+                        </template>
+                      </div>
+                    </div>
+
+                    <div class="meta-card-box">
+                      <div class="toolchain-header">
+                        <span>自定义节点提醒（如 OA 答复 / 代理商补正截止日）</span>
+                        <button class="btn btn-soft btn-sm" @click="addCustomDeadline()">+ 添加节点</button>
+                      </div>
+                      <template x-for="(dl, idx) in (patentMetaForm.custom_deadlines || [])" :key="dl.id || idx">
+                        <div class="numeral-row">
+                          <input type="checkbox" x-model="dl.done" title="标记完成" />
+                          <input type="text" style="flex:1;" x-model="dl.title" placeholder="节点事项说明" />
+                          <input type="date" x-model="dl.due_date" />
+                          <button class="mini-icon-btn" @click="removeCustomDeadline(idx)">✕</button>
+                        </div>
+                      </template>
+                    </div>
+
+                    <div class="meta-card-box">
+                      <div class="toolchain-header">
+                        <span>Windows 每日自动提醒服务（免常驻后台，到期弹系统通知）</span>
+                        <label class="toggle-pill" :class="{ active: reminderForm.task_registered }">
+                          <input type="checkbox" :checked="reminderForm.task_registered" @change="toggleWindowsReminderTask($event.target.checked)" />
+                          <span x-text="reminderForm.task_registered ? '计划任务: 已开启' : '计划任务: 未开启'"></span>
+                        </label>
+                      </div>
+                      <div class="form-grid">
+                        <div class="form-field">
+                          <label>提前预警天数</label>
+                          <input type="number" min="1" max="180" x-model.number="reminderForm.advance_days" />
+                        </div>
+                        <div class="form-field">
+                          <label>每日提醒时间 (HH:MM)</label>
+                          <input type="text" x-model="reminderForm.daily_time" placeholder="09:30" />
+                        </div>
+                      </div>
+                      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
+                        <button class="link-btn" @click="showSmtpConfig = !showSmtpConfig" x-text="showSmtpConfig ? '收起可选 SMTP 邮件配置 ▲' : '展开可选 SMTP 邮件提醒配置（后期扩展） ▼'"></button>
+                        <button class="btn btn-soft btn-sm" @click="saveReminderSettings()">保存提醒配置</button>
+                      </div>
+                      <div class="form-grid" style="margin-top:8px;" x-show="showSmtpConfig">
+                        <label class="checkbox-label form-full">
+                          <input type="checkbox" x-model="reminderForm.smtp.enabled" />
+                          <span>启用 SMTP 邮件附加通知</span>
+                        </label>
+                        <div class="form-field">
+                          <label>SMTP 主机</label>
+                          <input type="text" x-model="reminderForm.smtp.host" placeholder="smtp.qq.com" />
+                        </div>
+                        <div class="form-field">
+                          <label>端口 (SSL 465)</label>
+                          <input type="number" x-model.number="reminderForm.smtp.port" />
+                        </div>
+                        <div class="form-field">
+                          <label>发件邮箱</label>
+                          <input type="text" x-model="reminderForm.smtp.username" />
+                        </div>
+                        <div class="form-field">
+                          <label>授权码</label>
+                          <input type="password" x-model="reminderForm.smtp.password" />
+                        </div>
+                        <div class="form-field form-full">
+                          <label>收件邮箱</label>
+                          <div class="input-row">
+                            <input type="text" x-model="reminderForm.smtp.to_email" />
+                            <button class="btn btn-soft btn-sm" @click="testPatentReminder(true)">发送测试邮件</button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </template>
+            </section>
+          </main>
+        </template>
+      </div>
     </div>
   </div>
 
@@ -675,8 +1345,10 @@
       </div>
       <div class="modal-body">
         <div class="segmented-capsule" style="margin-bottom: 12px;">
-          <button class="seg-btn" :class="{ active: helpTab === 'init' }" @click="helpTab = 'init'">AI 目录整理提示词</button>
-          <button class="seg-btn" :class="{ active: helpTab === 'companions' }" @click="helpTab = 'companions'">AI 生成 Title Page / Highlights</button>
+          <button class="seg-btn" :class="{ active: helpTab === 'init' }" @click="helpTab = 'init'">AI 论文目录整理</button>
+          <button class="seg-btn" :class="{ active: helpTab === 'companions' }" @click="helpTab = 'companions'">Title Page / Highlights</button>
+          <button class="seg-btn" :class="{ active: helpTab === 'patent_init' }" @click="helpTab = 'patent_init'">AI 专利交底书助手</button>
+          <button class="seg-btn" :class="{ active: helpTab === 'patent_fb' }" @click="helpTab = 'patent_fb'">AI 拆解模糊意见</button>
           <button class="seg-btn" :class="{ active: helpTab === 'guide' }" @click="helpTab = 'guide'">使用流程指引</button>
         </div>
 
@@ -698,12 +1370,30 @@
           </div>
         </template>
 
+        <template x-if="helpTab === 'patent_init'">
+          <div>
+            <div class="help-callout">
+              将下方提示词连同你的代码/论文/思路发给 AI，即可自动规范撰写当前专利的 <code>disclosure.md</code>、登记 <code>reference_numerals</code> 标号，并供本软件一键生成标准中文专利交底书 Word (<code>.docx</code>)。
+            </div>
+            <textarea class="prompt-box" rows="14" readonly :value="patentInitPrompt()"></textarea>
+          </div>
+        </template>
+
+        <template x-if="helpTab === 'patent_fb'">
+          <div>
+            <div class="help-callout">
+              收到专利代理师或审查员的模糊微信/邮件/OA 文本后，将原文连同此提示词发给 AI，AI 会提炼为结构化任务卡与待确认问题列表写入 <code>.patent_feedback.json</code>。
+            </div>
+            <textarea class="prompt-box" rows="14" readonly :value="patentFeedbackPrompt()"></textarea>
+          </div>
+        </template>
+
         <template x-if="helpTab === 'guide'">
           <ul class="guide-list">
-            <li><strong>持久化 PDF 缓存</strong>：主稿与附属文档一旦编译成功，结果会持久化保存在本地缓存目录；下次重启软件时无需重新编译即可直接预览 Clean / Diff PDF。</li>
-            <li><strong>Codex 式工程树</strong>：左侧可自定义工程名、置顶常用工程，并在活跃工程下直接切换论文主稿与 Title Page / Highlights 等附属文档。</li>
-            <li><strong>可收起审稿看板</strong>：点击看板右上角「« 收起」或顶部「审稿看板」按钮即可收起，在全宽视图下核对公式与排版。</li>
-            <li><strong>删除二次确认</strong>：移除历史项目或删除审稿意见均设有二次确认弹窗，避免误操作。</li>
+            <li><strong>双工作台协作</strong>：顶部左侧可一键切换「论文返修」与「专利管理」，顶栏专利提醒徽章跨工作台实时可见。</li>
+            <li><strong>无感专利版本管理</strong>：软件在专利目录自动维护本地快照，无需手敲 Git；支持一键绑定 <code>expwin</code> Gitea 私有仓库同步备份。</li>
+            <li><strong>Markdown ↔ Word 闭环</strong>：用 Markdown 配合 AI 撰写交底书，一键生成规范 Word 提交代理；代理返回的 <code>.docx</code> 自动解析修订红线与批注。</li>
+            <li><strong>年费开机提醒</strong>：开启 Windows 每日计划任务后，即使关闭主界面也会在到期前自动弹出系统提醒。</li>
           </ul>
         </template>
       </div>
@@ -714,6 +1404,12 @@
         </template>
         <template x-if="helpTab === 'companions'">
           <button class="btn btn-mint" @click="copyAiPrompt(companionsInitPrompt(), 'comp')" x-text="aiCopyTag === 'comp' ? '✓ 已复制提示词' : '一键复制附属文档提示词'"></button>
+        </template>
+        <template x-if="helpTab === 'patent_init'">
+          <button class="btn btn-mint" @click="copyAiPrompt(patentInitPrompt(), 'pat_init')" x-text="aiCopyTag === 'pat_init' ? '✓ 已复制提示词' : '一键复制交底书提示词'"></button>
+        </template>
+        <template x-if="helpTab === 'patent_fb'">
+          <button class="btn btn-mint" @click="copyAiPrompt(patentFeedbackPrompt(), 'pat_fb')" x-text="aiCopyTag === 'pat_fb' ? '✓ 已复制提示词' : '一键复制模糊意见拆解提示词'"></button>
         </template>
       </div>
     </div>
@@ -985,6 +1681,236 @@
       <div class="modal-footer">
         <button class="btn btn-soft" @click="copyExport()" x-text="copyFeedback || '复制内容'"></button>
         <button class="btn btn-mint" @click="downloadExport()">下载文件</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Patent Modals: Open/Create, Snapshot, Gitea Config, Raw/Structured Feedback, Reply Export & Lightbox -->
+  <div class="modal-backdrop" x-show="showPatentModal" @click.self="showPatentModal = false">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>新建或导入专利项目</h3>
+        <button class="link-btn" @click="showPatentModal = false">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-grid">
+          <div class="form-field form-full">
+            <label>专利文件夹路径（已有目录将自动识别并托管快照；新目录可填完整新路径自动创建）</label>
+            <div class="input-row">
+              <input type="text" x-model="patentOpenForm.path" placeholder="E:\Patents\MyInventionPatent" />
+              <button class="btn btn-soft btn-sm" @click="pickPatentFolder()">浏览</button>
+            </div>
+          </div>
+          <div class="form-field">
+            <label>专利显示名称</label>
+            <input type="text" x-model="patentOpenForm.name" placeholder="例如 知识图谱多跳推理专利" />
+          </div>
+          <div class="form-field">
+            <label>专利类型</label>
+            <select x-model="patentOpenForm.patent_type">
+              <option value="invention">发明专利</option>
+              <option value="utility_model">实用新型</option>
+              <option value="design">外观设计</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-soft" @click="showPatentModal = false">取消</button>
+        <button class="btn btn-indigo" @click="confirmOpenPatent()">确认进入</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" x-show="showSnapshotModal" @click.self="showSnapshotModal = false">
+    <div class="modal modal-sm">
+      <div class="modal-header">
+        <h3>保存专利版本快照</h3>
+        <button class="link-btn" @click="showSnapshotModal = false">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-grid">
+          <div class="form-field form-full">
+            <label>版本说明</label>
+            <input type="text" x-model="snapshotForm.message" placeholder="例如 吸纳王代理修改并导出 v2 交底书" />
+          </div>
+          <div class="form-field form-full">
+            <label>版本标签 Tag（选填，方便后续对比）</label>
+            <input type="text" x-model="snapshotForm.tag" placeholder="例如 v2-代理返稿" />
+          </div>
+          <template x-if="patent.remote_url">
+            <label class="checkbox-label form-full">
+              <input type="checkbox" x-model="snapshotForm.push" />
+              <span>同时推送到 expwin Gitea 远程仓库</span>
+            </label>
+          </template>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-soft" @click="showSnapshotModal = false">取消</button>
+        <button class="btn btn-mint" @click="confirmCreateSnapshot()">保存快照</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" x-show="showGiteaModal" @click.self="showGiteaModal = false">
+    <div class="modal modal-lg">
+      <div class="modal-header">
+        <h3>expwin Gitea 专利版本同步与服务端指引</h3>
+        <button class="link-btn" @click="showGiteaModal = false">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-grid">
+          <div class="form-field form-full">
+            <label>Gitea 服务器地址（例如 expwin 局域网地址）</label>
+            <input type="text" x-model="giteaForm.server_url" placeholder="http://expwin:3000 或 http://192.168.1.50:3000" />
+          </div>
+          <div class="form-field">
+            <label>Gitea 用户名</label>
+            <input type="text" x-model="giteaForm.username" placeholder="your_username" />
+          </div>
+          <div class="form-field">
+            <label>组织名（选填，留空建在个人名下）</label>
+            <input type="text" x-model="giteaForm.org" placeholder="patents" />
+          </div>
+          <div class="form-field form-full">
+            <label>Personal Access Token（安全传入，不会明文写入仓库 .git/config）</label>
+            <div class="input-row">
+              <input type="password" x-model="giteaForm.token" placeholder="在 Gitea 用户设置 -> 应用 -> 生成令牌" />
+              <button class="btn btn-soft btn-sm" @click="testGiteaConn()">测试连通</button>
+            </div>
+          </div>
+        </div>
+
+        <template x-if="patent.patent_dir">
+          <div class="toolchain-box" style="margin-top:12px;">
+            <div class="toolchain-header">
+              <span>当前专利远程绑定状态</span>
+              <span class="sub-stat" x-text="patent.remote_url || '未绑定远端'"></span>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <button class="btn btn-mint btn-sm" @click="initBindGiteaRepo()">在 expwin 一键建私有仓并绑定</button>
+              <button class="btn btn-soft btn-sm" @click="syncPatentGitea('pull')">从 Gitea 拉取</button>
+              <button class="btn btn-indigo btn-sm" @click="syncPatentGitea('push')">推送到 Gitea</button>
+            </div>
+          </div>
+        </template>
+
+        <div class="help-callout" style="margin-top:12px;margin-bottom:0;">
+          <strong>expwin 快速部署轻量 Gitea 参考命令（Docker 一行启动，仅 ~120MB 内存）：</strong><br/>
+          <code>docker run -d --name gitea -p 3000:3000 -v D:\gitea_data:/data gitea/gitea:latest</code>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-soft" @click="showGiteaModal = false">取消</button>
+        <button class="btn btn-indigo" @click="saveGiteaConfig()">保存 Gitea 配置</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" x-show="showRawFeedbackModal" @click.self="showRawFeedbackModal = false">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>粘贴代理师 / 审查员模糊意见原件</h3>
+        <button class="link-btn" @click="showRawFeedbackModal = false">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-grid">
+          <div class="form-field form-full">
+            <label>来源标识</label>
+            <input type="text" x-model="rawFeedbackForm.source_label" placeholder="例如 微信-李代理 / 一通审查意见 OA1" />
+          </div>
+          <div class="form-field form-full">
+            <label>原始文本（可直接粘贴聊天记录、邮件或扫描 OCR 文本）</label>
+            <textarea rows="6" x-model="rawFeedbackForm.raw_text" placeholder="把零散模糊的反馈原封不动贴在这里，随后可配合 AI 提示词自动拆解..."></textarea>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-soft" @click="showRawFeedbackModal = false">取消</button>
+        <button class="btn btn-indigo" @click="saveRawFeedback()">存入收件箱</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" x-show="showFeedbackItemModal" @click.self="showFeedbackItemModal = false">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 x-text="feedbackItemForm.isEdit ? '编辑结构化意见卡' : '新增专利修改 / 确认卡'"></h3>
+        <button class="link-btn" @click="showFeedbackItemModal = false">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-grid">
+          <div class="form-field">
+            <label>意见来源</label>
+            <select x-model="feedbackItemForm.source">
+              <option value="agent">专利代理师</option>
+              <option value="examiner">审查员 OA</option>
+              <option value="internal">内部自查</option>
+            </select>
+          </div>
+          <div class="form-field">
+            <label>状态</label>
+            <select x-model="feedbackItemForm.status">
+              <option value="pending">待修改</option>
+              <option value="need_confirm">需与代理确认</option>
+              <option value="revised">已改稿待核</option>
+              <option value="resolved">已闭环</option>
+            </select>
+          </div>
+          <div class="form-field form-full">
+            <label>原始模糊表述（保留代理/审查员原话，防止语义丢失）</label>
+            <textarea rows="2" x-model="feedbackItemForm.original_fuzzy_note"></textarea>
+          </div>
+          <div class="form-field form-full">
+            <label>拆解后的可执行修改措施</label>
+            <textarea rows="2" x-model="feedbackItemForm.action_plan"></textarea>
+          </div>
+          <div class="form-field form-full">
+            <label>需反问确认的模糊点（选填）</label>
+            <input type="text" x-model="feedbackItemForm.clarification_question" placeholder="例如：独权是否只需保留阈值存在性，具体 0.55 放到从权？" />
+          </div>
+          <div class="form-field form-full">
+            <label>关联章节 / 附图</label>
+            <input type="text" x-model="feedbackItemForm.target_section" placeholder="例如 二、技术方案 (模块 102)" />
+          </div>
+          <div class="form-field form-full">
+            <label>回复 / 陈述草稿</label>
+            <textarea rows="2" x-model="feedbackItemForm.reply_draft"></textarea>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-soft" @click="showFeedbackItemModal = false">取消</button>
+        <button class="btn btn-indigo" @click="saveFeedbackItem()">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" x-show="showReplyExportModal" @click.self="showReplyExportModal = false">
+    <div class="modal modal-lg">
+      <div class="modal-header">
+        <h3>专利代理沟通确认单 / 修改回复草稿</h3>
+        <button class="link-btn" @click="showReplyExportModal = false">✕</button>
+      </div>
+      <div class="modal-body">
+        <textarea class="export-area" rows="16" readonly x-model="patentReplyExportContent"></textarea>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-soft" @click="copyAiPrompt(patentReplyExportContent, 'pat_reply')" x-text="aiCopyTag === 'pat_reply' ? '✓ 已复制' : '复制全文'"></button>
+        <button class="btn btn-mint" @click="exportPatentReplyWord()">同步导出 Word 确认单</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" x-show="lightboxFigureUrl" @click.self="lightboxFigureUrl = ''">
+    <div class="modal modal-lg" style="text-align:center;">
+      <div class="modal-header">
+        <h3>附图大图预览</h3>
+        <button class="link-btn" @click="lightboxFigureUrl = ''">✕</button>
+      </div>
+      <div class="modal-body">
+        <img :src="lightboxFigureUrl" style="max-width:100%;max-height:70vh;border-radius:10px;" />
       </div>
     </div>
   </div>

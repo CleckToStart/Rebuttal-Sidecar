@@ -154,8 +154,78 @@ function sidecarApp() {
     showErrorDrawer: false,
     toastMessage: "",
 
+    // Patent Management Workbench State
+    activeWorkbench: "paper",
+    patentAlerts: [],
+    patent: {
+      patent_dir: "",
+      meta: {},
+      feedback: { patent: "", raw_batches: [], items: [] },
+      documents: [],
+      figures: [],
+      schedule: { active_alerts: [], fee_schedule: [] },
+      snapshots: [],
+      remote_url: "",
+      numeral_check: { items: [], undeclared: [], missing_count: 0 },
+      patent_history: [],
+    },
+    patentFeedbackCollapsed: readBoolPref("rs_patent_fb_collapsed", false),
+    patentMainTab: "doc",
+    patentDocRel: "disclosure.md",
+    patentDocRev: "",
+    patentDoc: { ext: "md", blocks: [], comments: [], track_changes: [], has_redlines: false, raw_markdown: "" },
+    patentEditingMd: false,
+    patentMdDraft: "",
+    patentDiffForm: { left_rel: "disclosure.md", left_rev: "", right_rel: "disclosure.md", right_rev: "" },
+    patentDiffResult: { summary: null, blocks: [] },
+    patentMetaForm: { reference_numerals: [], custom_deadlines: [], fee_payments: [] },
+    patentSourceFilter: "ALL",
+    showRawInbox: false,
+    showAiPatentPopover: false,
+    _patentPopoverTimer: null,
+    showPatentModal: false,
+    patentOpenForm: { path: "", name: "", patent_type: "invention" },
+    showSnapshotModal: false,
+    snapshotForm: { message: "", tag: "", push: false },
+    showGiteaModal: false,
+    giteaForm: { server_url: "", username: "", token: "", org: "", auto_push: false },
+    reminderForm: {
+      advance_days: 30,
+      task_registered: false,
+      daily_time: "09:30",
+      smtp: { enabled: false, host: "", port: 465, ssl: true, username: "", password: "", to_email: "" },
+    },
+    showSmtpConfig: false,
+    showRawFeedbackModal: false,
+    rawFeedbackForm: { source_label: "微信-专利代理师", raw_text: "" },
+    showFeedbackItemModal: false,
+    feedbackItemForm: {
+      isEdit: false,
+      id: "",
+      source: "agent",
+      category: "clarify_needed",
+      original_fuzzy_note: "",
+      action_plan: "",
+      clarification_question: "",
+      target_section: "",
+      reply_draft: "",
+      status: "pending",
+    },
+    showReplyExportModal: false,
+    patentReplyExportContent: "",
+    isExportingDocx: false,
+    lightboxFigureUrl: "",
+    patentStages: [
+      { key: "drafting", label: "交底撰写" },
+      { key: "agency_review", label: "代理修改" },
+      { key: "filed", label: "递交受理" },
+      { key: "prelim_exam", label: "初审" },
+      { key: "substantive_exam", label: "实审 / OA" },
+      { key: "granted", label: "授权维持" },
+    ],
+
     async init() {
-      await Promise.all([this.loadSettings(), this.loadWorkspace()]);
+      await Promise.all([this.loadSettings(), this.loadWorkspace(), this.loadPatentState()]);
       await this.syncDesktopShellState();
       this.connectSSE();
     },
@@ -264,6 +334,14 @@ function sidecarApp() {
         if (st.state === "success" && st.detected_bin_dir) {
           this.compilerForm.tex_bin_dir = st.detected_bin_dir;
           this.probeToolchain();
+        }
+      });
+      es.addEventListener("PATENT_UPDATED", (e) => {
+        this.applyPatentState(JSON.parse(e.data));
+      });
+      es.addEventListener("PATENT_FILES_CHANGED", async () => {
+        if (this.activeWorkbench === "patent" && this.patent.patent_dir && !this.patentEditingMd) {
+          await this.loadPatentState();
         }
       });
       es.addEventListener("FILES_CHANGED", (e) => {
@@ -700,6 +778,8 @@ function sidecarApp() {
       const data = await apiJson("/api/settings");
       this.settings = data.compiler;
       this.isDesktopShell = Boolean(data.desktop_shell);
+      if (data.active_workbench) this.activeWorkbench = data.active_workbench;
+      if (Array.isArray(data.patent_alerts)) this.patentAlerts = data.patent_alerts;
     },
 
     async toggleAutoCompile(enabled) {
@@ -1230,6 +1310,647 @@ function sidecarApp() {
       } else {
         await this.renderCurrentView(true);
       }
+    },
+
+    // ---------------- Patent Management Workbench Methods ----------------
+
+    async switchWorkbench(wb) {
+      this.activeWorkbench = wb;
+      await apiJson("/api/workbench", { method: "PUT", body: JSON.stringify({ workbench: wb }) });
+      if (wb === "patent") {
+        await this.loadPatentState();
+      }
+    },
+
+    async jumpToPatentAlert(alert) {
+      this.activeWorkbench = "patent";
+      await apiJson("/api/workbench", { method: "PUT", body: JSON.stringify({ workbench: "patent" }) });
+      if (alert?.patent_path && !this.isCurrentPatent(alert.patent_path)) {
+        await this.openPatentPath(alert.patent_path);
+      } else {
+        await this.loadPatentState();
+      }
+      this.patentMainTab = "timeline";
+    },
+
+    togglePatentFeedbackCollapse() {
+      this.patentFeedbackCollapsed = !this.patentFeedbackCollapsed;
+      writeBoolPref("rs_patent_fb_collapsed", this.patentFeedbackCollapsed);
+    },
+
+    isCurrentPatent(path) {
+      return Boolean(this.patent.patent_dir) && this.patent.patent_dir.toLowerCase() === String(path).toLowerCase();
+    },
+
+    patentTypeLabel(t) {
+      return { invention: "发明", utility_model: "实用", design: "外观" }[t] || "发明";
+    },
+
+    patentStageLabel(st) {
+      return (this.patentStages.find((x) => x.key === st) || { label: st || "草稿" }).label;
+    },
+
+    async loadPatentState() {
+      const st = await apiJson("/api/patents/state");
+      this.applyPatentState(st);
+      if (st.patent_dir && st.documents?.length) {
+        const exists = st.documents.some((d) => d.rel_path === this.patentDocRel);
+        if (!exists) this.patentDocRel = st.documents[0].rel_path;
+        await this.loadPatentDocument();
+      }
+    },
+
+    applyPatentState(st) {
+      this.patent = st;
+      this.patentAlerts = st.alerts || [];
+      this.patentMetaForm = JSON.parse(
+        JSON.stringify({
+          title: "",
+          patent_type: "invention",
+          application_no: "",
+          inventors: "",
+          agency: "",
+          stage: "drafting",
+          filing_date: "",
+          grant_date: "",
+          fee_reduction: 0,
+          figures: [],
+          reference_numerals: [],
+          fee_payments: [],
+          custom_deadlines: [],
+          ...(st.meta || {}),
+        }),
+      );
+      if (st.gitea) this.giteaForm = { ...this.giteaForm, ...st.gitea };
+      if (st.reminders) {
+        this.reminderForm = {
+          advance_days: st.reminders.advance_days ?? 30,
+          task_registered: Boolean(st.reminders.task_registered),
+          daily_time: st.reminders.daily_time || "09:30",
+          smtp: {
+            enabled: false,
+            host: "",
+            port: 465,
+            ssl: true,
+            username: "",
+            password: "",
+            to_email: "",
+            ...(st.reminders.smtp || {}),
+          },
+        };
+      }
+    },
+
+    openPatentModal() {
+      this.patentOpenForm = { path: "", name: "", patent_type: "invention" };
+      this.showPatentModal = true;
+    },
+
+    async pickPatentFolder() {
+      try {
+        const res = await apiJson("/api/settings/select-dir", { method: "POST" });
+        if (res.path) {
+          this.patentOpenForm.path = res.path;
+          if (!this.patentOpenForm.name) {
+            this.patentOpenForm.name = res.path.replace(/[/\\]+$/, "").split(/[/\\]/).pop() || "";
+          }
+        }
+      } catch (err) {
+        this.showToast(err.message);
+      }
+    },
+
+    async confirmOpenPatent() {
+      if (!this.patentOpenForm.path.trim()) return;
+      try {
+        const st = await apiJson("/api/patents/open", {
+          method: "POST",
+          body: JSON.stringify(this.patentOpenForm),
+        });
+        this.showPatentModal = false;
+        this.applyPatentState(st);
+        if (st.documents?.length) {
+          this.patentDocRel = st.documents[0].rel_path;
+          await this.loadPatentDocument();
+        }
+        this.showToast("已打开专利工程");
+      } catch (err) {
+        this.showToast(`打开失败: ${err.message}`);
+      }
+    },
+
+    async openPatentPath(path) {
+      const st = await apiJson("/api/patents/open", { method: "POST", body: JSON.stringify({ path }) });
+      this.applyPatentState(st);
+      if (st.documents?.length) {
+        this.patentDocRel = st.documents[0].rel_path;
+        await this.loadPatentDocument();
+      }
+    },
+
+    async openDemoPatent() {
+      const st = await apiJson("/api/patents/demo", { method: "POST" });
+      this.applyPatentState(st);
+      this.patentDocRel = "submissions/代理修改稿_v2.docx";
+      this.patentMainTab = "doc";
+      await this.loadPatentDocument();
+      this.showToast("已加载示例专利工程（含 Word 批注修订与年费倒计时）");
+    },
+
+    async togglePinPatent(item) {
+      const res = await apiJson("/api/patents/history", {
+        method: "PATCH",
+        body: JSON.stringify({ path: item.path, pinned: !item.pinned }),
+      });
+      this.patent.patent_history = res.patent_history || [];
+    },
+
+    requestRemovePatent(item) {
+      this.askConfirm({
+        title: "移除专利记录",
+        message: `确认将「${item.name}」从专利项目库移除？仅移除记录，不会删除磁盘文件。`,
+        confirmText: "确认移除",
+        onConfirm: async () => {
+          const res = await apiJson("/api/patents/history", {
+            method: "DELETE",
+            body: JSON.stringify({ path: item.path }),
+          });
+          this.patent.patent_history = res.patent_history || [];
+          this.patentAlerts = res.alerts || [];
+          if (this.isCurrentPatent(item.path)) {
+            this.patent.patent_dir = "";
+          }
+          this.showToast("已移除专利记录");
+        },
+      });
+    },
+
+    async selectPatentDocument(rel) {
+      this.patentMainTab = "doc";
+      this.patentDocRel = rel;
+      this.patentDocRev = "";
+      this.patentEditingMd = false;
+      await this.loadPatentDocument();
+    },
+
+    async loadPatentDocument() {
+      if (!this.patent.patent_dir || !this.patentDocRel) return;
+      try {
+        const q = new URLSearchParams({ rel: this.patentDocRel, rev: this.patentDocRev || "" });
+        this.patentDoc = await apiJson(`/api/patents/document?${q.toString()}`);
+      } catch (err) {
+        this.showToast(err.message);
+      }
+    },
+
+    togglePatentMdEdit() {
+      if (!this.patentEditingMd) {
+        this.patentMdDraft = this.patentDoc.raw_markdown || "";
+      }
+      this.patentEditingMd = !this.patentEditingMd;
+    },
+
+    async savePatentMarkdown() {
+      const res = await apiJson("/api/patents/markdown", {
+        method: "PUT",
+        body: JSON.stringify({ rel: this.patentDocRel, content: this.patentMdDraft }),
+      });
+      this.patentDoc = res.document;
+      this.patent.numeral_check = res.numeral_check;
+      this.patentEditingMd = false;
+      this.showToast("Markdown 交底书已保存并重新核查附图标记");
+    },
+
+    async exportPatentDocx() {
+      if (!this.patent.patent_dir || this.isExportingDocx) return;
+      this.isExportingDocx = true;
+      try {
+        const res = await apiJson("/api/patents/export-docx", {
+          method: "POST",
+          body: JSON.stringify({ source_md: "disclosure.md", snapshot: true }),
+        });
+        this.applyPatentState(res.state);
+        this.patentDocRel = res.exported_rel;
+        this.patentDocRev = "";
+        this.patentMainTab = "doc";
+        await this.loadPatentDocument();
+        this.showToast(`已生成并记录快照: ${res.exported_rel}`);
+      } catch (err) {
+        this.showToast(`导出失败: ${err.message}`);
+      } finally {
+        this.isExportingDocx = false;
+      }
+    },
+
+    async openPatentDiffTab() {
+      this.patentMainTab = "diff";
+      if (!this.patentDiffForm.left_rev && (this.patent.snapshots || []).length > 1) {
+        this.patentDiffForm.left_rev = this.patent.snapshots[this.patent.snapshots.length - 1].ref;
+      }
+      await this.runPatentDiff();
+    },
+
+    async runPatentDiff() {
+      if (!this.patent.patent_dir) return;
+      const q = new URLSearchParams(this.patentDiffForm);
+      try {
+        this.patentDiffResult = await apiJson(`/api/patents/diff?${q.toString()}`);
+      } catch (err) {
+        this.showToast(`对比失败: ${err.message}`);
+      }
+    },
+
+    openSnapshotModal() {
+      this.snapshotForm = { message: "", tag: "", push: Boolean(this.patent.remote_url && this.giteaForm.token) };
+      this.showSnapshotModal = true;
+    },
+
+    async confirmCreateSnapshot() {
+      try {
+        const res = await apiJson("/api/patents/snapshots", {
+          method: "POST",
+          body: JSON.stringify(this.snapshotForm),
+        });
+        this.applyPatentState(res.state);
+        this.showSnapshotModal = false;
+        this.showToast(`已保存版本快照 ${res.snapshot.ref}`);
+      } catch (err) {
+        this.showToast(err.message);
+      }
+    },
+
+    openGiteaModal() {
+      this.showGiteaModal = true;
+    },
+
+    async saveGiteaConfig() {
+      const res = await apiJson("/api/patents/gitea/config", {
+        method: "PUT",
+        body: JSON.stringify(this.giteaForm),
+      });
+      this.giteaForm = res.gitea;
+      this.showGiteaModal = false;
+      this.showToast("expwin Gitea 配置已保存");
+    },
+
+    async testGiteaConn() {
+      try {
+        const res = await apiJson("/api/patents/gitea/test", {
+          method: "POST",
+          body: JSON.stringify(this.giteaForm),
+        });
+        this.showToast(`连接成功，当前用户: ${res.username}`);
+      } catch (err) {
+        this.showToast(err.message);
+      }
+    },
+
+    async initBindGiteaRepo() {
+      try {
+        await apiJson("/api/patents/gitea/config", { method: "PUT", body: JSON.stringify(this.giteaForm) });
+        const res = await apiJson("/api/patents/gitea/init-repo", { method: "POST", body: JSON.stringify({}) });
+        this.applyPatentState(res.state);
+        this.showToast(`已创建并绑定私有仓库: ${res.remote_url}`);
+      } catch (err) {
+        this.showToast(err.message);
+      }
+    },
+
+    async syncPatentGitea(direction = "push") {
+      if (!this.patent.remote_url || !this.giteaForm.token) {
+        this.openGiteaModal();
+        return;
+      }
+      try {
+        const res = await apiJson("/api/patents/gitea/sync", {
+          method: "POST",
+          body: JSON.stringify({ direction }),
+        });
+        this.applyPatentState(res.state);
+        this.showToast(direction === "pull" ? "已从 Gitea 拉取最新快照" : "已推送所有快照到 expwin Gitea");
+      } catch (err) {
+        this.showToast(err.message);
+      }
+    },
+
+    async importPatentFigure() {
+      try {
+        const res = await apiJson("/api/patents/figures/import", {
+          method: "POST",
+          body: JSON.stringify({ pick_dialog: true }),
+        });
+        if (!res.cancelled && res.state) {
+          this.applyPatentState(res.state);
+          this.showToast(`已导入附图: ${res.filename}`);
+        }
+      } catch (err) {
+        this.showToast(err.message);
+      }
+    },
+
+    async updateFigureCaption(filename, caption) {
+      const figs = (this.patentMetaForm.figures || []).map((f) =>
+        f.filename === filename ? { ...f, caption } : f,
+      );
+      if (!figs.some((f) => f.filename === filename)) {
+        figs.push({ filename, caption });
+      }
+      this.patentMetaForm.figures = figs;
+      await this.savePatentMeta();
+    },
+
+    copyFigureMdSnippet(fig) {
+      this.copyAiPrompt(`![${fig.caption}](figures/${fig.filename})`, `fig_${fig.filename}`);
+    },
+
+    addReferenceNumeral() {
+      if (!Array.isArray(this.patentMetaForm.reference_numerals)) this.patentMetaForm.reference_numerals = [];
+      this.patentMetaForm.reference_numerals.push({ code: "", name: "" });
+    },
+
+    removeReferenceNumeral(idx) {
+      this.patentMetaForm.reference_numerals.splice(idx, 1);
+    },
+
+    async refreshNumeralCheck() {
+      this.patent.numeral_check = await apiJson("/api/patents/numerals/check");
+      this.showToast("已完成附图标记核查");
+    },
+
+    numeralStatusClass(code) {
+      const hit = (this.patent.numeral_check?.items || []).find((x) => x.code === code);
+      if (!hit) return "";
+      return hit.status === "ok" ? "char-ok" : "char-over";
+    },
+
+    numeralStatusText(code) {
+      const hit = (this.patent.numeral_check?.items || []).find((x) => x.code === code);
+      if (!hit) return "保存后核查";
+      if (hit.status === "ok") return `正常 (命中 ${hit.code_hits} 次)`;
+      if (hit.status === "name_mismatch") return "模块称谓与正文不一致";
+      return "正文中未出现";
+    },
+
+    addCustomDeadline() {
+      if (!Array.isArray(this.patentMetaForm.custom_deadlines)) this.patentMetaForm.custom_deadlines = [];
+      this.patentMetaForm.custom_deadlines.push({
+        id: "DL-" + Date.now(),
+        title: "",
+        due_date: "",
+        done: false,
+      });
+    },
+
+    removeCustomDeadline(idx) {
+      this.patentMetaForm.custom_deadlines.splice(idx, 1);
+    },
+
+    async markPatentFeePaid(row) {
+      const payments = Array.isArray(this.patentMetaForm.fee_payments) ? [...this.patentMetaForm.fee_payments] : [];
+      payments.push({
+        year: row.year,
+        paid_at: new Date().toISOString().slice(0, 10),
+        amount: row.estimated_fee,
+      });
+      this.patentMetaForm.fee_payments = payments;
+      await this.savePatentMeta();
+      this.showToast(`已登记第 ${row.year} 年度年费`);
+    },
+
+    async savePatentMeta() {
+      const st = await apiJson("/api/patents/meta", {
+        method: "PUT",
+        body: JSON.stringify(this.patentMetaForm),
+      });
+      this.applyPatentState(st);
+      this.showToast("已保存专利元数据与时间表");
+    },
+
+    async toggleWindowsReminderTask(enabled) {
+      try {
+        const res = await apiJson("/api/patents/reminders/settings", {
+          method: "PUT",
+          body: JSON.stringify({ ...this.reminderForm, task_enabled: enabled }),
+        });
+        this.applyPatentState({ ...this.patent, reminders: res.reminders, alerts: res.alerts });
+        this.showToast(res.task?.message || (enabled ? "已开启每日提醒" : "已关闭每日提醒"));
+      } catch (err) {
+        this.showToast(err.message);
+      }
+    },
+
+    async saveReminderSettings() {
+      const res = await apiJson("/api/patents/reminders/settings", {
+        method: "PUT",
+        body: JSON.stringify(this.reminderForm),
+      });
+      this.applyPatentState({ ...this.patent, reminders: res.reminders, alerts: res.alerts });
+      this.showToast("提醒策略已保存");
+    },
+
+    async testPatentReminder(emailOnly = false) {
+      try {
+        await apiJson("/api/patents/reminders/test", {
+          method: "POST",
+          body: JSON.stringify({ email_only: emailOnly, smtp: this.reminderForm.smtp }),
+        });
+        this.showToast(emailOnly ? "测试邮件已发送" : "已发送桌面系统通知");
+      } catch (err) {
+        this.showToast(`测试失败: ${err.message}`);
+      }
+    },
+
+    // Patent Fuzzy Feedback Workbench
+    patentResolvedCount() {
+      return (this.patent.feedback?.items || []).filter((i) => i.status === "resolved").length;
+    },
+
+    patentFeedbackPct() {
+      const total = (this.patent.feedback?.items || []).length;
+      return total ? Math.round((this.patentResolvedCount() / total) * 100) : 0;
+    },
+
+    filteredPatentFeedback() {
+      const items = this.patent.feedback?.items || [];
+      if (this.patentSourceFilter === "ALL") return items;
+      if (this.patentSourceFilter === "need_confirm") return items.filter((i) => i.status === "need_confirm");
+      return items.filter((i) => i.source === this.patentSourceFilter);
+    },
+
+    patentSourceLabel(src) {
+      return { agent: "代理师", examiner: "审查员 OA", internal: "内部自查" }[src] || src;
+    },
+
+    patentStatusText(st) {
+      return { pending: "待修改", need_confirm: "待确认", revised: "已改稿", resolved: "已闭环" }[st] || st;
+    },
+
+    patentCardClass(st) {
+      return { pending: "pending", need_confirm: "pending", revised: "agent_done", resolved: "verified" }[st] || "pending";
+    },
+
+    async cyclePatentFeedbackStatus(item) {
+      const order = ["pending", "need_confirm", "revised", "resolved"];
+      const next = order[(order.indexOf(item.status) + 1) % order.length];
+      const res = await apiJson(`/api/patents/feedback/items/${encodeURIComponent(item.id)}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: next }),
+      });
+      this.patent.feedback = res.feedback;
+    },
+
+    openRawFeedbackModal() {
+      this.rawFeedbackForm = { source_label: "微信-专利代理师", raw_text: "" };
+      this.showRawFeedbackModal = true;
+    },
+
+    async saveRawFeedback() {
+      try {
+        const res = await apiJson("/api/patents/feedback/raw", {
+          method: "POST",
+          body: JSON.stringify(this.rawFeedbackForm),
+        });
+        this.patent.feedback = res.feedback;
+        this.showRawFeedbackModal = false;
+        this.showRawInbox = true;
+        this.showToast("已收入模糊意见原件");
+      } catch (err) {
+        this.showToast(err.message);
+      }
+    },
+
+    async importDocxComments() {
+      const res = await apiJson("/api/patents/feedback/import-docx", {
+        method: "POST",
+        body: JSON.stringify({ rel: this.patentDocRel }),
+      });
+      this.patent.feedback = res.feedback;
+      this.showToast(`已从 Word 批注导入 ${res.added} 条意见（共 ${res.total_comments} 条批注）`);
+    },
+
+    openFeedbackItemModal(item = null) {
+      if (item) {
+        this.feedbackItemForm = { isEdit: true, ...item };
+      } else {
+        this.feedbackItemForm = {
+          isEdit: false,
+          id: "",
+          source: "agent",
+          category: "clarify_needed",
+          original_fuzzy_note: "",
+          action_plan: "",
+          clarification_question: "",
+          target_section: "",
+          reply_draft: "",
+          status: "pending",
+        };
+      }
+      this.showFeedbackItemModal = true;
+    },
+
+    async saveFeedbackItem() {
+      try {
+        let res;
+        if (this.feedbackItemForm.isEdit) {
+          res = await apiJson(`/api/patents/feedback/items/${encodeURIComponent(this.feedbackItemForm.id)}`, {
+            method: "PATCH",
+            body: JSON.stringify(this.feedbackItemForm),
+          });
+        } else {
+          res = await apiJson("/api/patents/feedback/items", {
+            method: "POST",
+            body: JSON.stringify(this.feedbackItemForm),
+          });
+        }
+        this.patent.feedback = res.feedback;
+        this.showFeedbackItemModal = false;
+      } catch (err) {
+        this.showToast(err.message);
+      }
+    },
+
+    requestDeleteFeedbackItem(item) {
+      this.askConfirm({
+        title: "删除专利意见卡",
+        message: `确认删除意见卡「${item.id}」？`,
+        confirmText: "确认删除",
+        onConfirm: async () => {
+          const res = await apiJson(`/api/patents/feedback/items/${encodeURIComponent(item.id)}`, {
+            method: "DELETE",
+          });
+          this.patent.feedback = res.feedback;
+          this.showToast(`已删除 ${item.id}`);
+        },
+      });
+    },
+
+    async exportPatentReplySheet() {
+      const res = await apiJson("/api/patents/feedback/export?format=md");
+      this.patentReplyExportContent = res.content || "";
+      this.showReplyExportModal = true;
+    },
+
+    async exportPatentReplyWord() {
+      const res = await apiJson("/api/patents/feedback/export?format=docx");
+      await this.loadPatentState();
+      this.showToast(`已生成 ${res.exported_rel}`);
+    },
+
+    openAiPatentPopover(toggle = false) {
+      this.cancelCloseAiPatentPopover();
+      this.showAiPatentPopover = toggle ? !this.showAiPatentPopover : true;
+    },
+
+    scheduleCloseAiPatentPopover() {
+      this.cancelCloseAiPatentPopover();
+      this._patentPopoverTimer = setTimeout(() => {
+        this.showAiPatentPopover = false;
+      }, 220);
+    },
+
+    cancelCloseAiPatentPopover() {
+      if (this._patentPopoverTimer) {
+        clearTimeout(this._patentPopoverTimer);
+        this._patentPopoverTimer = null;
+      }
+    },
+
+    patentInitPrompt() {
+      const pdir = this.patent.patent_dir || "<专利目录>";
+      return `请协助我在目录（${pdir}）下规范撰写/完善专利技术交底书：
+
+1. 正文写入：${pdir}\\disclosure.md
+   - 包含：一、发明创造名称；二、技术领域；三、背景技术与缺陷；四、发明内容（技术问题、技术方案、有益效果）；五、附图说明；六、具体实施方式。
+   - 所有核心组件与算法模块在首次出现及后续步骤中请使用统一命名与附图标记，例如「子图裁剪模块（102）」。
+   - 插图请保存在 ${pdir}\\figures\\ 下，并在正文中用 ![图1 说明](figures/fig1.png) 引用。
+2. 附图标记同步：
+   - 请同时将全部「标号-名称」字典写入 ${pdir}\\.patent_meta.json 的 "reference_numerals" 数组，方便 Rebuttal Sidecar 自动核查一致性。`;
+    },
+
+    patentFeedbackPrompt() {
+      const pdir = this.patent.patent_dir || "<专利目录>";
+      const title = this.patent.meta?.title || "当前专利";
+      return `下面是我收到的专利代理师 / 审查员原始反馈（可能较为口语、模糊）。请读取 ${pdir}\\disclosure.md 与 ${pdir}\\.patent_feedback.json，帮我将每条模糊意见拆解为可执行修改点：
+
+1. 目标文件：${pdir}\\.patent_feedback.json
+2. 输出格式规范（追加到 items 数组）：
+   {
+     "patent": "${title}",
+     "items": [
+       {
+         "id": "AG-1",
+         "source": "agent",
+         "category": "claim_scope",
+         "original_fuzzy_note": "保留代理师/审查员的模糊原话",
+         "action_plan": "拆解为对 disclosure.md 的具体补充或修改措施",
+         "clarification_question": "若原话存在歧义或需与代理确认保护范围，写出反问问题；清晰则留空",
+         "target_section": "对应的章节或附图模块",
+         "reply_draft": "可发给代理/写进意见陈述书的答复草稿",
+         "status": "need_confirm"
+       }
+     ]
+   }
+3. 如你同时修改了 disclosure.md，请将该条 status 标为 "revised"，保存文件后软件会自动同步刷新看板。`;
     },
   };
 }

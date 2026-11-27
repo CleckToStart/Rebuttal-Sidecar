@@ -11,6 +11,7 @@ from ctypes import wintypes
 from pathlib import Path
 
 from config import AppConfig
+from patent_timeline import run_reminder_check
 from server import SidecarApp
 
 
@@ -199,11 +200,17 @@ def main(argv: list[str] | None = None) -> int:
     if sys.stderr is None:
         sys.stderr = open(os.devnull, "w", encoding="utf-8")
 
-    parser = argparse.ArgumentParser(description="Rebuttal Sidecar — Local LaTeX Rebuttal Companion")
+    parser = argparse.ArgumentParser(description="Rebuttal Sidecar — Local LaTeX Rebuttal & Patent Companion")
     parser.add_argument("workspace", nargs="?", default="", help="Project root or docs/manuscripts directory")
     parser.add_argument("--headless", action="store_true", help="Run local HTTP/SSE server without PyWebView window")
     parser.add_argument("--port", type=int, default=0, help="Local port to bind (default: random free port)")
+    parser.add_argument("--check-reminders", action="store_true", help="Check patent deadlines and send due reminders")
     args = parser.parse_args(argv)
+
+    if args.check_reminders:
+        summary = run_reminder_check(AppConfig(), force=False)
+        print(f"Patent reminder check: checked={summary['checked']} notified={summary['notified']}", flush=True)
+        return 0
 
     web_dir = _resolve_resource_path("web")
     icon_path = _resolve_resource_path("assets/icon.ico")
@@ -259,7 +266,38 @@ def main(argv: list[str] | None = None) -> int:
         _open_on_sta()
         return result_box[0]
 
+    def choose_image_file() -> str | None:
+        if not window_holder:
+            return None
+        win = window_holder[0]
+        initial_dir = app.active_patent_dir or app.workspace_info.get("project_root") or str(Path.home())
+        open_mode = getattr(webview, "OPEN_DIALOG", None) or webview.FileDialog.OPEN
+        result_box: list[str | None] = [None]
+
+        def _open_on_sta() -> None:
+            selected = win.create_file_dialog(
+                open_mode,
+                directory=initial_dir,
+                file_types=("Image files (*.png;*.jpg;*.jpeg;*.svg;*.webp;*.bmp)", "All files (*.*)"),
+            )
+            result_box[0] = selected[0] if selected else None
+
+        try:
+            from System import Action
+            from webview.platforms.winforms import BrowserView
+
+            form = BrowserView.instances.get(win.uid)
+            if form is not None and form.InvokeRequired:
+                form.Invoke(Action(_open_on_sta))
+                return result_box[0]
+        except Exception:
+            pass
+
+        _open_on_sta()
+        return result_box[0]
+
     app.folder_dialog_fn = choose_folder
+    app.file_dialog_fn = choose_image_file
     bridge = WindowBridge(lambda: window_holder[0] if window_holder else None)
     window = webview.create_window(
         "Rebuttal Sidecar",
