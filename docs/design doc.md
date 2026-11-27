@@ -183,7 +183,7 @@ docs/manuscripts/
 ├── .patent_meta.json         # 专利元数据、生命周期节点、年费缴纳记录与附图标记字典
 ├── .patent_feedback.json     # 两层结构：模糊原文收件箱 + 拆解后的结构化修改卡
 ├── .gitignore                # 自动屏蔽 ~$*、*.tmp、Thumbs.db、.DS_Store
-└── .git/                     # 软件自动托管的本地透明版本库（可一键绑定推送至 expwin Gitea）
+└── .git/                     # 软件自动托管的本地透明版本库
 ```
 
 ### 4.6 纯 Python 双向 Markdown <-> Word (`.docx`) 引擎 (`docx_engine.py`)
@@ -194,10 +194,9 @@ docs/manuscripts/
 2. **跨版本对比 (`diff_document_blocks`)**：支持对任意历史快照或 `.md`/`.docx` 文件进行段落级与行内中英文词元 Diff。
 3. **交底书一键导出 (`export_markdown_to_docx`)**：将 `disclosure.md`、元数据表（专利名称、类型、发明人、交底日期）与 `figures/` 中的 PNG/JPEG 图片（按头信息自动计算宽高比例适配 A4 版心）生成规范的中文专利交底书 `.docx`。
 
-### 4.7 透明本地版本快照与 `expwin` Gitea 协同 (`patent_vcs.py`)
+### 4.7 透明本地版本快照 (`patent_vcs.py`)
 
-- **免手动 Git**：打开或新建专利工程时自动初始化本地 `.git`（并自动兜底写入本地仓库 `user.name`/`user.email`），界面提供**「保存版本快照」**与历史快照清单，支持任意历史版本的二进制文件提取用于 Diff。
-- **`expwin` Gitea 对接**：全局配置 `expwin` 服务器地址与 Personal Access Token，支持一键连通性测试、自动创建私有仓库并配置 `origin`，推送/拉取时通过瞬态 `git -c http.extraHeader=...` 传递凭据，绝不把明文 Token 写入 `.git/config`。
+- **免手动 Git**：打开或新建专利工程时自动初始化本地 `.git`（并自动兜底写入本地仓库 `user.name`/`user.email`），界面提供**「保存版本快照」**与历史快照清单，支持任意历史版本的二进制文件提取用于 Diff（零破坏、不覆盖正在打开编辑的 Word/Markdown 文档）。
 
 ### 4.8 说明书附图与附图标记 (`101-模块`) 一致性核查 (`patent_manager.py`)
 
@@ -289,13 +288,13 @@ docs/manuscripts/
 
 ### 5.4 专利工作台数据结构与 HTTP 接口概览
 
-- **`.patent_meta.json`**：存储专利基本字段（`title`、`patent_type`、`application_no`、`filing_date`、`grant_date`、`stage`、`fee_reduction`、`agency`、`gitea_repo`）、`figures` 次序与图注、`reference_numerals` 标号字典、`fee_payments` 缴费记录及 `custom_deadlines` 自定义截止日。
+- **`.patent_meta.json`**：存储专利基本字段（`title`、`patent_type`、`application_no`、`filing_date`、`grant_date`、`stage`、`fee_reduction`、`agency`）、`figures` 次序与图注、`reference_numerals` 标号字典、`fee_payments` 缴费记录及 `custom_deadlines` 自定义截止日。
 - **`.patent_feedback.json`**：存储 `raw_batches`（模糊意见原始批）与 `items`（结构化意见条目：`id`、`source`、`category`、`original_fuzzy_note`、`action_plan`、`clarification_question`、`target_section`、`reply_draft`、`status`、`updated_at`）。
 - **核心接口**：
   - `PUT /api/workbench`：切换顶层 `paper` / `patent` 工作台。
   - `GET /api/patents/state`、`POST /api/patents/open|create|demo`、`PATCH|DELETE /api/patents/history`、`PUT /api/patents/meta`。
   - `GET /api/patents/document`、`PUT /api/patents/markdown`、`POST /api/patents/export-docx`、`GET /api/patents/diff`。
-  - `GET|POST /api/patents/snapshots`、`PUT /api/patents/gitea/config`、`POST /api/patents/gitea/test|init-repo|sync`。
+  - `GET|POST /api/patents/snapshots`。
   - `GET /api/patents/figures/<file>`、`POST /api/patents/figures/import`、`GET /api/patents/numerals/check`。
   - `POST /api/patents/feedback/raw|import-docx|items`、`PATCH|DELETE /api/patents/feedback/items/<id>`、`GET /api/patents/feedback/export`。
   - `GET /api/patents/alerts`、`PUT /api/patents/reminders/settings`、`POST /api/patents/reminders/test`。

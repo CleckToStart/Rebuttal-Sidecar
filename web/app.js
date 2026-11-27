@@ -165,7 +165,6 @@ function sidecarApp() {
       figures: [],
       schedule: { active_alerts: [], fee_schedule: [] },
       snapshots: [],
-      remote_url: "",
       numeral_check: { items: [], undeclared: [], missing_count: 0 },
       patent_history: [],
     },
@@ -186,9 +185,7 @@ function sidecarApp() {
     showPatentModal: false,
     patentOpenForm: { path: "", name: "", patent_type: "invention" },
     showSnapshotModal: false,
-    snapshotForm: { message: "", tag: "", push: false },
-    showGiteaModal: false,
-    giteaForm: { server_url: "", username: "", token: "", org: "", auto_push: false },
+    snapshotForm: { message: "", tag: "" },
     reminderForm: {
       advance_days: 30,
       task_registered: false,
@@ -1381,7 +1378,6 @@ function sidecarApp() {
           ...(st.meta || {}),
         }),
       );
-      if (st.gitea) this.giteaForm = { ...this.giteaForm, ...st.gitea };
       if (st.reminders) {
         this.reminderForm = {
           advance_days: st.reminders.advance_days ?? 30,
@@ -1561,7 +1557,7 @@ function sidecarApp() {
     },
 
     openSnapshotModal() {
-      this.snapshotForm = { message: "", tag: "", push: Boolean(this.patent.remote_url && this.giteaForm.token) };
+      this.snapshotForm = { message: "", tag: "" };
       this.showSnapshotModal = true;
     },
 
@@ -1579,57 +1575,11 @@ function sidecarApp() {
       }
     },
 
-    openGiteaModal() {
-      this.showGiteaModal = true;
-    },
-
-    async saveGiteaConfig() {
-      const res = await apiJson("/api/patents/gitea/config", {
-        method: "PUT",
-        body: JSON.stringify(this.giteaForm),
-      });
-      this.giteaForm = res.gitea;
-      this.showGiteaModal = false;
-      this.showToast("expwin Gitea 配置已保存");
-    },
-
-    async testGiteaConn() {
-      try {
-        const res = await apiJson("/api/patents/gitea/test", {
-          method: "POST",
-          body: JSON.stringify(this.giteaForm),
-        });
-        this.showToast(`连接成功，当前用户: ${res.username}`);
-      } catch (err) {
-        this.showToast(err.message);
-      }
-    },
-
-    async initBindGiteaRepo() {
-      try {
-        await apiJson("/api/patents/gitea/config", { method: "PUT", body: JSON.stringify(this.giteaForm) });
-        const res = await apiJson("/api/patents/gitea/init-repo", { method: "POST", body: JSON.stringify({}) });
-        this.applyPatentState(res.state);
-        this.showToast(`已创建并绑定私有仓库: ${res.remote_url}`);
-      } catch (err) {
-        this.showToast(err.message);
-      }
-    },
-
-    async syncPatentGitea(direction = "push") {
-      if (!this.patent.remote_url || !this.giteaForm.token) {
-        this.openGiteaModal();
-        return;
-      }
-      try {
-        const res = await apiJson("/api/patents/gitea/sync", {
-          method: "POST",
-          body: JSON.stringify({ direction }),
-        });
-        this.applyPatentState(res.state);
-        this.showToast(direction === "pull" ? "已从 Gitea 拉取最新快照" : "已推送所有快照到 expwin Gitea");
-      } catch (err) {
-        this.showToast(err.message);
+    openPatentSettings() {
+      if (this.patent.patent_dir) {
+        this.patentMainTab = "timeline";
+      } else {
+        this.openPatentModal();
       }
     },
 

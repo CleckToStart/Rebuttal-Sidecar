@@ -27,11 +27,8 @@ from patent_timeline import (
     set_windows_reminder_task,
 )
 from patent_vcs import (
-    create_or_bind_gitea_repo,
     create_snapshot,
     list_snapshots,
-    sync_gitea,
-    test_gitea_connection,
 )
 from proc_utils import check_toolchain, scan_local_tex_installations
 from scanner import WorkspacePaths, list_baselines, resolve_workspace, scan_workspace, verify_git_baseline_ref
@@ -246,13 +243,11 @@ class SidecarApp:
                 "figures": [],
                 "schedule": {"active_alerts": [], "fee_schedule": []},
                 "snapshots": [],
-                "remote_url": "",
                 "numeral_check": {"items": [], "undeclared": [], "missing_count": 0},
             }
         return {
             **core,
             "patent_history": self.config.patent_history,
-            "gitea": self.config.gitea,
             "reminders": self._reminders_view(),
             "alerts": collect_all_patent_alerts(self.config),
         }
@@ -934,58 +929,12 @@ class SidecarApp:
             body = request.json or {}
             msg = str(body.get("message", "")).strip() or "chore(patent): save snapshot"
             tag = str(body.get("tag", "")).strip()
-            auto_push = bool(body.get("push", False))
             try:
                 pdir = self._active_patent_path()
                 res = create_snapshot(pdir, msg, tag=tag)
-                if auto_push and self.config.gitea.get("token"):
-                    sync_gitea(pdir, self.config.gitea, direction="push")
                 state = self.get_patent_state_payload()
                 self.broker.publish("PATENT_UPDATED", state)
                 return _json_response({"snapshot": res, "state": state})
-            except (ValueError, RuntimeError) as exc:
-                return _json_response({"error": str(exc)}, status=400)
-
-        @app.put("/api/patents/gitea/config")
-        def put_gitea_config():
-            body = request.json or {}
-            updated = self.config.update_gitea(body)
-            return _json_response({"gitea": updated})
-
-        @app.post("/api/patents/gitea/test")
-        def post_gitea_test():
-            body = request.json or {}
-            cfg = {**self.config.gitea, **body} if body else self.config.gitea
-            try:
-                return _json_response(test_gitea_connection(cfg))
-            except (ValueError, RuntimeError) as exc:
-                return _json_response({"error": str(exc)}, status=400)
-
-        @app.post("/api/patents/gitea/init-repo")
-        def post_gitea_init_repo():
-            body = request.json or {}
-            try:
-                pdir = self._active_patent_path()
-                meta = self.patent_mgr.load_meta(pdir)
-                repo_name = str(body.get("repo_name", "")).strip() or pdir.name
-                res = create_or_bind_gitea_repo(
-                    pdir,
-                    repo_name=repo_name,
-                    description=str(meta.get("title") or pdir.name),
-                    gitea_cfg=self.config.gitea,
-                )
-                return _json_response({**res, "state": self.get_patent_state_payload()})
-            except (ValueError, RuntimeError) as exc:
-                return _json_response({"error": str(exc)}, status=400)
-
-        @app.post("/api/patents/gitea/sync")
-        def post_gitea_sync():
-            body = request.json or {}
-            direction = str(body.get("direction", "push")).strip().lower()
-            try:
-                pdir = self._active_patent_path()
-                res = sync_gitea(pdir, self.config.gitea, direction=direction)
-                return _json_response({**res, "state": self.get_patent_state_payload()})
             except (ValueError, RuntimeError) as exc:
                 return _json_response({"error": str(exc)}, status=400)
 

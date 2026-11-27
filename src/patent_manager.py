@@ -22,7 +22,7 @@ from docx_engine import (
     parse_markdown_blocks,
 )
 from patent_timeline import compute_patent_schedule
-from patent_vcs import ensure_patent_repo, get_remote_url, list_snapshots, read_snapshot_file
+from patent_vcs import ensure_patent_repo, list_snapshots, read_snapshot_file
 
 META_FILENAME = ".patent_meta.json"
 FEEDBACK_FILENAME = ".patent_feedback.json"
@@ -276,7 +276,6 @@ class PatentManager:
         figures = self.scan_figures(patent_dir, meta)
         schedule = compute_patent_schedule(meta, advance_days=advance_days)
         snapshots = list_snapshots(patent_dir)
-        remote_url = get_remote_url(patent_dir)
         numeral_check = self.check_reference_numerals(patent_dir, meta.get("reference_numerals"))
 
         return {
@@ -287,7 +286,6 @@ class PatentManager:
             "figures": figures,
             "schedule": schedule,
             "snapshots": snapshots,
-            "remote_url": remote_url,
             "numeral_check": numeral_check,
         }
 

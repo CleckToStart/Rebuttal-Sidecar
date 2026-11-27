@@ -52,7 +52,7 @@
       </template>
       <template x-if="!sidebarExpanded">
         <div class="rail-bottom">
-          <button class="rail-btn" @click="activeWorkbench === 'paper' ? openCompilerModal() : openGiteaModal()" :title="activeWorkbench === 'paper' ? '编译器设置' : 'Gitea 同步与年费提醒设置'">
+          <button class="rail-btn" @click="activeWorkbench === 'paper' ? openCompilerModal() : openPatentSettings()" :title="activeWorkbench === 'paper' ? '编译器设置' : '生命周期与年费提醒设置'">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
           </button>
         </div>
@@ -403,15 +403,12 @@
             <button class="btn btn-soft btn-sm" @click="openSnapshotModal()">保存快照</button>
           </template>
           <template x-if="activeWorkbench === 'patent' && patent.patent_dir">
-            <button class="btn btn-soft btn-sm" @click="syncPatentGitea('push')" :title="patent.remote_url ? ('同步到 ' + patent.remote_url) : '配置并绑定 expwin Gitea'">同步 Gitea</button>
-          </template>
-          <template x-if="activeWorkbench === 'patent' && patent.patent_dir">
             <button class="btn btn-mint btn-sm" :disabled="isExportingDocx" @click="exportPatentDocx()">
               <span x-text="isExportingDocx ? '导出中...' : '导出交底书 Word'"></span>
             </button>
           </template>
           <template x-if="activeWorkbench === 'patent'">
-            <button class="icon-pill-btn" @click="openGiteaModal()" title="expwin Gitea 与年费提醒服务设置">
+            <button class="icon-pill-btn" @click="openPatentSettings()" title="生命周期与年费提醒服务设置">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
             </button>
           </template>
@@ -703,7 +700,7 @@
             <div class="empty-card">
               <div class="empty-hero">
                 <h2>专利撰写、版本管理与年费守护</h2>
-                <p>支持 Markdown 交底书与 AI 协作撰写、标准中文专利 Word (<code>.docx</code>) 一键生成、代理商修订痕迹/批注解析、附图标号一致性检查、本地版本快照 / <code>expwin</code> Gitea 同步，以及国家知识产权局年费自动推算与开机提醒。</p>
+                <p>支持 Markdown 交底书与 AI 协作撰写、标准中文专利 Word (<code>.docx</code>) 一键生成、代理商修订痕迹/批注解析、附图标号一致性检查、无感本地版本快照，以及国家知识产权局年费自动推算与开机提醒。</p>
               </div>
               <div class="empty-actions">
                 <button class="btn btn-indigo" @click="openPatentModal()">+ 新建或导入专利项目</button>
@@ -931,7 +928,7 @@
                   <div class="viewer-header">
                     <div class="viewer-title-group">
                       <span class="viewer-title">跨版本 / 跨格式差异对比</span>
-                      <span class="viewer-sub">支持比对任意本地/Gitea 快照与当前 Markdown / Word 交底书</span>
+                      <span class="viewer-sub">支持比对任意本地历史快照与当前 Markdown / Word 交底书</span>
                     </div>
                     <div class="viewer-controls">
                       <select class="pill-select" x-model="patentDiffForm.left_rel">
@@ -1391,7 +1388,7 @@
         <template x-if="helpTab === 'guide'">
           <ul class="guide-list">
             <li><strong>双工作台协作</strong>：顶部左侧可一键切换「论文返修」与「专利管理」，顶栏专利提醒徽章跨工作台实时可见。</li>
-            <li><strong>无感专利版本管理</strong>：软件在专利目录自动维护本地快照，无需手敲 Git；支持一键绑定 <code>expwin</code> Gitea 私有仓库同步备份。</li>
+            <li><strong>无感专利版本管理</strong>：软件在专利目录自动维护本地快照，无需手敲 Git；支持随时保存与回溯历次交底书快照。</li>
             <li><strong>Markdown ↔ Word 闭环</strong>：用 Markdown 配合 AI 撰写交底书，一键生成规范 Word 提交代理；代理返回的 <code>.docx</code> 自动解析修订红线与批注。</li>
             <li><strong>年费开机提醒</strong>：开启 Windows 每日计划任务后，即使关闭主界面也会在到期前自动弹出系统提醒。</li>
           </ul>
@@ -1685,7 +1682,7 @@
     </div>
   </div>
 
-  <!-- Patent Modals: Open/Create, Snapshot, Gitea Config, Raw/Structured Feedback, Reply Export & Lightbox -->
+  <!-- Patent Modals: Open/Create, Snapshot, Raw/Structured Feedback, Reply Export & Lightbox -->
   <div class="modal-backdrop" x-show="showPatentModal" @click.self="showPatentModal = false">
     <div class="modal">
       <div class="modal-header">
@@ -1738,72 +1735,11 @@
             <label>版本标签 Tag（选填，方便后续对比）</label>
             <input type="text" x-model="snapshotForm.tag" placeholder="例如 v2-代理返稿" />
           </div>
-          <template x-if="patent.remote_url">
-            <label class="checkbox-label form-full">
-              <input type="checkbox" x-model="snapshotForm.push" />
-              <span>同时推送到 expwin Gitea 远程仓库</span>
-            </label>
-          </template>
         </div>
       </div>
       <div class="modal-footer">
         <button class="btn btn-soft" @click="showSnapshotModal = false">取消</button>
         <button class="btn btn-mint" @click="confirmCreateSnapshot()">保存快照</button>
-      </div>
-    </div>
-  </div>
-
-  <div class="modal-backdrop" x-show="showGiteaModal" @click.self="showGiteaModal = false">
-    <div class="modal modal-lg">
-      <div class="modal-header">
-        <h3>expwin Gitea 专利版本同步与服务端指引</h3>
-        <button class="link-btn" @click="showGiteaModal = false">✕</button>
-      </div>
-      <div class="modal-body">
-        <div class="form-grid">
-          <div class="form-field form-full">
-            <label>Gitea 服务器地址（例如 expwin 局域网地址）</label>
-            <input type="text" x-model="giteaForm.server_url" placeholder="http://expwin:3000 或 http://192.168.1.50:3000" />
-          </div>
-          <div class="form-field">
-            <label>Gitea 用户名</label>
-            <input type="text" x-model="giteaForm.username" placeholder="your_username" />
-          </div>
-          <div class="form-field">
-            <label>组织名（选填，留空建在个人名下）</label>
-            <input type="text" x-model="giteaForm.org" placeholder="patents" />
-          </div>
-          <div class="form-field form-full">
-            <label>Personal Access Token（安全传入，不会明文写入仓库 .git/config）</label>
-            <div class="input-row">
-              <input type="password" x-model="giteaForm.token" placeholder="在 Gitea 用户设置 -> 应用 -> 生成令牌" />
-              <button class="btn btn-soft btn-sm" @click="testGiteaConn()">测试连通</button>
-            </div>
-          </div>
-        </div>
-
-        <template x-if="patent.patent_dir">
-          <div class="toolchain-box" style="margin-top:12px;">
-            <div class="toolchain-header">
-              <span>当前专利远程绑定状态</span>
-              <span class="sub-stat" x-text="patent.remote_url || '未绑定远端'"></span>
-            </div>
-            <div style="display:flex;gap:8px;flex-wrap:wrap;">
-              <button class="btn btn-mint btn-sm" @click="initBindGiteaRepo()">在 expwin 一键建私有仓并绑定</button>
-              <button class="btn btn-soft btn-sm" @click="syncPatentGitea('pull')">从 Gitea 拉取</button>
-              <button class="btn btn-indigo btn-sm" @click="syncPatentGitea('push')">推送到 Gitea</button>
-            </div>
-          </div>
-        </template>
-
-        <div class="help-callout" style="margin-top:12px;margin-bottom:0;">
-          <strong>expwin 快速部署轻量 Gitea 参考命令（Docker 一行启动，仅 ~120MB 内存）：</strong><br/>
-          <code>docker run -d --name gitea -p 3000:3000 -v D:\gitea_data:/data gitea/gitea:latest</code>
-        </div>
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-soft" @click="showGiteaModal = false">取消</button>
-        <button class="btn btn-indigo" @click="saveGiteaConfig()">保存 Gitea 配置</button>
       </div>
     </div>
   </div>

@@ -49,14 +49,6 @@ DEFAULT_COMPILER_SETTINGS: dict = {
     "miktex_auto_install": False,
 }
 
-DEFAULT_GITEA_SETTINGS: dict = {
-    "server_url": "",
-    "username": "",
-    "token": "",
-    "org": "",
-    "auto_push": False,
-}
-
 DEFAULT_REMINDER_SETTINGS: dict = {
     "advance_days": 30,
     "task_enabled": False,
@@ -87,19 +79,6 @@ def _normalize_patent_history_item(raw: dict) -> dict | None:
         "pinned": bool(raw.get("pinned", False)),
         "updated_at": str(raw.get("updated_at") or _utc_now_iso()),
     }
-
-
-def _normalize_gitea(raw: dict | None) -> dict:
-    merged = dict(DEFAULT_GITEA_SETTINGS)
-    if not raw:
-        return merged
-    for key in ("server_url", "username", "token", "org"):
-        if key in raw:
-            merged[key] = str(raw[key]).strip()
-    merged["server_url"] = merged["server_url"].rstrip("/")
-    if "auto_push" in raw:
-        merged["auto_push"] = bool(raw["auto_push"])
-    return merged
 
 
 def _normalize_reminders(raw: dict | None) -> dict:
@@ -178,7 +157,6 @@ class AppConfig:
             "last_patent": "",
             "patent_history": [],
             "compiler": dict(DEFAULT_COMPILER_SETTINGS),
-            "gitea": dict(DEFAULT_GITEA_SETTINGS),
             "reminders": deepcopy(DEFAULT_REMINDER_SETTINGS),
         }
         if not self.path.exists():
@@ -221,7 +199,6 @@ class AppConfig:
             "last_patent": str(raw.get("last_patent", "")),
             "patent_history": pat_history,
             "compiler": _normalize_compiler(raw.get("compiler")),
-            "gitea": _normalize_gitea(raw.get("gitea")),
             "reminders": _normalize_reminders(raw.get("reminders")),
         }
 
@@ -413,17 +390,6 @@ class AppConfig:
             self.data["last_patent"] = self.data["patent_history"][0]["path"] if self.data["patent_history"] else ""
         self.save()
         return self.patent_history
-
-    @property
-    def gitea(self) -> dict:
-        return deepcopy(self.data["gitea"])
-
-    def update_gitea(self, patch: dict) -> dict:
-        combined = dict(self.data["gitea"])
-        combined.update(patch)
-        self.data["gitea"] = _normalize_gitea(combined)
-        self.save()
-        return self.gitea
 
     @property
     def reminders(self) -> dict:
