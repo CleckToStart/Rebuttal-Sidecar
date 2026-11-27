@@ -170,3 +170,103 @@ class ManuscriptWatcher:
                 self._compile_timer = threading.Timer(debounce_sec, self._on_auto_compile, args=(active,))
                 self._compile_timer.daemon = True
                 self._compile_timer.start()
+
+
+PATENT_WATCH_SUFFIXES = {".md", ".docx", ".png", ".jpg", ".jpeg", ".svg", ".webp", ".bmp"}
+PATENT_DATA_FILES = {".patent_meta.json", ".patent_feedback.json"}
+
+
+class _PatentHandler(FileSystemEventHandler):
+    def __init__(self, owner: "PatentWatcher") -> None:
+        self._owner = owner
+
+    def on_modified(self, event: FileSystemEvent) -> None:
+        if not event.is_directory:
+            self._owner.handle_path(Path(event.src_path))
+
+    def on_created(self, event: FileSystemEvent) -> None:
+        if not event.is_directory:
+            self._owner.handle_path(Path(event.src_path))
+
+    def on_moved(self, event: FileSystemEvent) -> None:
+        if not event.is_directory and getattr(event, "dest_path", None):
+            self._owner.handle_path(Path(event.dest_path))
+
+
+class PatentWatcher:
+    """Watches active patent directory for Markdown/Word/figure edits and external JSON sync."""
+
+    def __init__(
+        self,
+        on_file_changed: Callable[[str], None],
+        on_data_changed: Callable[[str], None],
+        was_self_write: Callable[[Path], bool],
+    ) -> None:
+        self._on_file_changed = on_file_changed
+        self._on_data_changed = on_data_changed
+        self._was_self_write = was_self_write
+        self._lock = threading.Lock()
+        self._observer: Observer | None = None
+        self._patent_dir: Path | None = None
+        self._file_timer: threading.Timer | None = None
+        self._data_timer: threading.Timer | None = None
+
+    def configure(self, patent_dir: Path | None) -> None:
+        with self._lock:
+            resolved = patent_dir.resolve() if patent_dir else None
+            if resolved == self._patent_dir:
+                return
+            self._patent_dir = resolved
+
+        if self._observer is not None:
+            self._observer.stop()
+            self._observer.join(timeout=2)
+            self._observer = None
+
+        if resolved and resolved.is_dir():
+            observer = Observer(timeout=0.1)
+            observer.schedule(_PatentHandler(self), str(resolved), recursive=True)
+            observer.daemon = True
+            observer.start()
+            self._observer = observer
+
+    def stop(self) -> None:
+        with self._lock:
+            if self._file_timer:
+                self._file_timer.cancel()
+                self._file_timer = None
+            if self._data_timer:
+                self._data_timer.cancel()
+                self._data_timer = None
+        if self._observer is not None:
+            self._observer.stop()
+            self._observer.join(timeout=2)
+            self._observer = None
+
+    def handle_path(self, raw_path: Path) -> None:
+        with self._lock:
+            patent_dir = self._patent_dir
+        if not patent_dir:
+            return
+        path = raw_path.resolve()
+        if ".git" in path.parts or path.name.startswith("~$") or path.name.endswith(".tmp"):
+            return
+
+        if path.name in PATENT_DATA_FILES and path.parent == patent_dir:
+            if self._was_self_write(path):
+                return
+            with self._lock:
+                if self._data_timer:
+                    self._data_timer.cancel()
+                self._data_timer = threading.Timer(0.25, self._on_data_changed, args=(path.name,))
+                self._data_timer.daemon = True
+                self._data_timer.start()
+            return
+
+        if path.suffix.lower() in PATENT_WATCH_SUFFIXES:
+            with self._lock:
+                if self._file_timer:
+                    self._file_timer.cancel()
+                self._file_timer = threading.Timer(0.3, self._on_file_changed, args=(path.name,))
+                self._file_timer.daemon = True
+                self._file_timer.start()

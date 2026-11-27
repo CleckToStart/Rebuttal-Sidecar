@@ -49,6 +49,87 @@ DEFAULT_COMPILER_SETTINGS: dict = {
     "miktex_auto_install": False,
 }
 
+DEFAULT_GITEA_SETTINGS: dict = {
+    "server_url": "",
+    "username": "",
+    "token": "",
+    "org": "",
+    "auto_push": False,
+}
+
+DEFAULT_REMINDER_SETTINGS: dict = {
+    "advance_days": 30,
+    "task_enabled": False,
+    "daily_time": "09:30",
+    "last_notified": {},
+    "smtp": {
+        "enabled": False,
+        "host": "",
+        "port": 465,
+        "ssl": True,
+        "username": "",
+        "password": "",
+        "to_email": "",
+    },
+}
+
+
+def _normalize_patent_history_item(raw: dict) -> dict | None:
+    path_str = str(raw.get("path", "")).strip()
+    if not path_str:
+        return None
+    p = Path(path_str)
+    return {
+        "path": path_str,
+        "name": str(raw.get("name") or p.name or path_str),
+        "patent_type": str(raw.get("patent_type") or "invention"),
+        "stage": str(raw.get("stage") or "drafting"),
+        "pinned": bool(raw.get("pinned", False)),
+        "updated_at": str(raw.get("updated_at") or _utc_now_iso()),
+    }
+
+
+def _normalize_gitea(raw: dict | None) -> dict:
+    merged = dict(DEFAULT_GITEA_SETTINGS)
+    if not raw:
+        return merged
+    for key in ("server_url", "username", "token", "org"):
+        if key in raw:
+            merged[key] = str(raw[key]).strip()
+    merged["server_url"] = merged["server_url"].rstrip("/")
+    if "auto_push" in raw:
+        merged["auto_push"] = bool(raw["auto_push"])
+    return merged
+
+
+def _normalize_reminders(raw: dict | None) -> dict:
+    merged = deepcopy(DEFAULT_REMINDER_SETTINGS)
+    if not raw:
+        return merged
+    if "advance_days" in raw:
+        merged["advance_days"] = max(1, min(180, int(raw["advance_days"])))
+    if "task_enabled" in raw:
+        merged["task_enabled"] = bool(raw["task_enabled"])
+    if "daily_time" in raw:
+        val = str(raw["daily_time"]).strip()
+        if len(val) == 5 and val[2] == ":":
+            merged["daily_time"] = val
+    if isinstance(raw.get("last_notified"), dict):
+        merged["last_notified"] = {str(k): str(v) for k, v in raw["last_notified"].items()}
+    if isinstance(raw.get("smtp"), dict):
+        s_in = raw["smtp"]
+        smtp = merged["smtp"]
+        if "enabled" in s_in:
+            smtp["enabled"] = bool(s_in["enabled"])
+        for key in ("host", "username", "password", "to_email"):
+            if key in s_in:
+                smtp[key] = str(s_in[key]).strip()
+        if "port" in s_in:
+            smtp["port"] = max(1, min(65535, int(s_in["port"])))
+        if "ssl" in s_in:
+            smtp["ssl"] = bool(s_in["ssl"])
+    return merged
+
 
 def default_config_path() -> Path:
     base = Path(os.environ.get("APPDATA") or Path.home())
@@ -90,10 +171,15 @@ class AppConfig:
 
     def _load(self) -> dict:
         default = {
+            "active_workbench": "paper",
             "last_workspace": "",
             "recent_workspaces": [],
             "workspace_history": [],
+            "last_patent": "",
+            "patent_history": [],
             "compiler": dict(DEFAULT_COMPILER_SETTINGS),
+            "gitea": dict(DEFAULT_GITEA_SETTINGS),
+            "reminders": deepcopy(DEFAULT_REMINDER_SETTINGS),
         }
         if not self.path.exists():
             return default
@@ -116,12 +202,27 @@ class AppConfig:
                 if norm:
                     history.append(norm)
 
+        pat_history: list[dict] = []
+        if isinstance(raw.get("patent_history"), list):
+            for entry in raw["patent_history"]:
+                if isinstance(entry, dict):
+                    norm = _normalize_patent_history_item(entry)
+                    if norm:
+                        pat_history.append(norm)
+
         history = _sort_history(history)
+        pat_history = _sort_history(pat_history)
+        wb = str(raw.get("active_workbench", "paper"))
         return {
+            "active_workbench": wb if wb in ("paper", "patent") else "paper",
             "last_workspace": str(raw.get("last_workspace", "")),
             "recent_workspaces": [item["path"] for item in history][:10],
             "workspace_history": history,
+            "last_patent": str(raw.get("last_patent", "")),
+            "patent_history": pat_history,
             "compiler": _normalize_compiler(raw.get("compiler")),
+            "gitea": _normalize_gitea(raw.get("gitea")),
+            "reminders": _normalize_reminders(raw.get("reminders")),
         }
 
     def save(self) -> None:
@@ -234,3 +335,107 @@ class AppConfig:
         self.data["compiler"] = _normalize_compiler(combined)
         self.save()
         return self.compiler
+
+    @property
+    def active_workbench(self) -> str:
+        return self.data["active_workbench"]
+
+    def set_active_workbench(self, workbench: str) -> str:
+        wb = workbench if workbench in ("paper", "patent") else "paper"
+        self.data["active_workbench"] = wb
+        self.save()
+        return wb
+
+    @property
+    def last_patent(self) -> str:
+        return self.data["last_patent"]
+
+    @property
+    def patent_history(self) -> list[dict]:
+        return deepcopy(self.data["patent_history"])
+
+    def record_patent(
+        self,
+        patent_path: str,
+        name: str = "",
+        patent_type: str = "invention",
+        stage: str = "drafting",
+    ) -> list[dict]:
+        normalized = str(Path(patent_path).resolve())
+        existing = next(
+            (i for i in self.data["patent_history"] if i["path"].lower() == normalized.lower()),
+            None,
+        )
+        others = [i for i in self.data["patent_history"] if i["path"].lower() != normalized.lower()]
+        resolved_name = name.strip() or (existing["name"] if existing else (Path(normalized).name or normalized))
+        entry = {
+            "path": normalized,
+            "name": resolved_name,
+            "patent_type": patent_type or (existing["patent_type"] if existing else "invention"),
+            "stage": stage or (existing["stage"] if existing else "drafting"),
+            "pinned": bool(existing["pinned"]) if existing else False,
+            "updated_at": _utc_now_iso(),
+        }
+        self.data["last_patent"] = normalized
+        self.data["patent_history"] = _sort_history([entry, *others])
+        self.save()
+        return self.patent_history
+
+    def rename_patent(self, patent_path: str, new_name: str) -> list[dict]:
+        clean = new_name.strip()
+        if not clean:
+            return self.patent_history
+        normalized = str(Path(patent_path).resolve()).lower()
+        for item in self.data["patent_history"]:
+            if item["path"].lower() == normalized:
+                item["name"] = clean
+                item["updated_at"] = _utc_now_iso()
+                self.save()
+                break
+        return self.patent_history
+
+    def set_patent_pinned(self, patent_path: str, pinned: bool) -> list[dict]:
+        normalized = str(Path(patent_path).resolve()).lower()
+        for item in self.data["patent_history"]:
+            if item["path"].lower() == normalized:
+                item["pinned"] = bool(pinned)
+                break
+        self.data["patent_history"] = _sort_history(self.data["patent_history"])
+        self.save()
+        return self.patent_history
+
+    def remove_patent(self, patent_path: str) -> list[dict]:
+        normalized = str(Path(patent_path).resolve()).lower()
+        self.data["patent_history"] = [
+            i for i in self.data["patent_history"] if i["path"].lower() != normalized
+        ]
+        if self.data["last_patent"].lower() == normalized:
+            self.data["last_patent"] = self.data["patent_history"][0]["path"] if self.data["patent_history"] else ""
+        self.save()
+        return self.patent_history
+
+    @property
+    def gitea(self) -> dict:
+        return deepcopy(self.data["gitea"])
+
+    def update_gitea(self, patch: dict) -> dict:
+        combined = dict(self.data["gitea"])
+        combined.update(patch)
+        self.data["gitea"] = _normalize_gitea(combined)
+        self.save()
+        return self.gitea
+
+    @property
+    def reminders(self) -> dict:
+        return deepcopy(self.data["reminders"])
+
+    def update_reminders(self, patch: dict) -> dict:
+        combined = deepcopy(self.data["reminders"])
+        if "smtp" in patch and isinstance(patch["smtp"], dict):
+            smtp = dict(combined.get("smtp") or {})
+            smtp.update(patch["smtp"])
+            patch = {**patch, "smtp": smtp}
+        combined.update(patch)
+        self.data["reminders"] = _normalize_reminders(combined)
+        self.save()
+        return self.reminders
