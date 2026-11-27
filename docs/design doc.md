@@ -169,6 +169,46 @@ docs/manuscripts/
   - `miktex_auto_install`（`bool`，默认 `false`）：是否允许 MiKTeX 在编译时自动静默安装缺失宏包（默认关闭 `--miktex-disable-installer` 防止无界面阻塞）。
 - **工具链健康检测**：提供 `GET /api/settings/compiler/check`，即时返回 `xelatex`、`pdflatex`、`lualatex`、`latexmk`、`latexdiff`、`bibtex`、`biber`、`perl`、`git` 的解析路径与可用状态。
 
+### 4.5 专利管理双工作台架构与目录约定
+
+在顶部工具栏提供**「论文返修 | 专利管理」**双工作台无缝切换，并保留全局专利节点/年费提醒徽章。专利项目通常不采用原生 Git 协作，且以 Markdown 撰写中间稿与 AI 协作、以 Word（`.docx`）向代理商/国家知识产权局提交交底书与审阅返稿。每个专利目录结构如下：
+
+```text
+<PatentDir>/
+├── disclosure.md             # 专利技术交底书 Markdown 主稿（AI 协作撰写与快速编辑）
+├── submissions/              # Word 定稿与代理商返稿（自动忽略 ~$*.docx 锁文件）
+│   ├── 交底书_v1.docx
+│   └── 代理修改稿_v2.docx
+├── figures/                  # 说明书附图（图1、图2... 及附图标记映射）
+├── .patent_meta.json         # 专利元数据、生命周期节点、年费缴纳记录与附图标记字典
+├── .patent_feedback.json     # 两层结构：模糊原文收件箱 + 拆解后的结构化修改卡
+├── .gitignore                # 自动屏蔽 ~$*、*.tmp、Thumbs.db、.DS_Store
+└── .git/                     # 软件自动托管的本地透明版本库（可一键绑定推送至 expwin Gitea）
+```
+
+### 4.6 纯 Python 双向 Markdown <-> Word (`.docx`) 引擎 (`docx_engine.py`)
+
+为保持 Nuitka 单文件体积紧凑（不引入 `python-docx` / `lxml` 等重型依赖），使用 Python 标准库 `zipfile` + `xml.etree.ElementTree` + `difflib` 实现纯 Python OOXML 引擎：
+
+1. **`.docx` 解析与批注/修订提取 (`parse_docx`)**：解析段落、标题级别、表格、内嵌图片，并识别 Word 修订痕迹（`<w:ins>` 插入、`<w:del>/<w:delText>` 删除，含作者与时间）及批注（`<w:comment>` 关联 `<w:commentRangeStart>..<w:commentRangeEnd>` 锚定原文片段）。
+2. **跨版本对比 (`diff_document_blocks`)**：支持对任意历史快照或 `.md`/`.docx` 文件进行段落级与行内中英文词元 Diff。
+3. **交底书一键导出 (`export_markdown_to_docx`)**：将 `disclosure.md`、元数据表（专利名称、类型、发明人、交底日期）与 `figures/` 中的 PNG/JPEG 图片（按头信息自动计算宽高比例适配 A4 版心）生成规范的中文专利交底书 `.docx`。
+
+### 4.7 透明本地版本快照与 `expwin` Gitea 协同 (`patent_vcs.py`)
+
+- **免手动 Git**：打开或新建专利工程时自动初始化本地 `.git`（并自动兜底写入本地仓库 `user.name`/`user.email`），界面提供**「保存版本快照」**与历史快照清单，支持任意历史版本的二进制文件提取用于 Diff。
+- **`expwin` Gitea 对接**：全局配置 `expwin` 服务器地址与 Personal Access Token，支持一键连通性测试、自动创建私有仓库并配置 `origin`，推送/拉取时通过瞬态 `git -c http.extraHeader=...` 传递凭据，绝不把明文 Token 写入 `.git/config`。
+
+### 4.8 说明书附图与附图标记 (`101-模块`) 一致性核查 (`patent_manager.py`)
+
+集中管理 `figures/` 下的 `图1, 图2...` 次序、图注、导入与预览卡片，并支持维护 `reference_numerals` 字典（如 `101: 数据采集模块`），自动比对 `disclosure.md` 与最新 `.docx` 正文中的标号出现情况与命名一致性，提前发现漏写或称谓不统一问题。
+
+### 4.9 专利代理商 / 审查员模糊意见收集与生命周期年费计时服务 (`patent_timeline.py`)
+
+- **模糊意见两层工作流 (`.patent_feedback.json`)**：针对代理师微信/邮件/批注与审查员 OA 表述往往较模糊的特点，支持在 `raw_batches` 收件箱粘贴原始消息或一键抽取 Word 批注，再由人工或 AI 拆解为结构化任务卡（含 `original_fuzzy_note` 模糊原文、`action_plan` 拟改方案、`clarification_question` 需向代理确认的疑问点、`target_section`、`reply_draft` 及 `pending`/`need_confirm`/`revised`/`resolved` 状态），并可导出《代理沟通确认单 / OA 陈述草稿》。
+- **生命周期与年费计时服务**：记录 `invention`（20年）/ `utility_model`（10年）/ `design`（15年）类型、`filing_date`（申请日）、`grant_date`（授权日）、费减比例（`0%`/`70%`/`85%`）、已缴年度记录与自定义 OA 截止日，按**申请日周年**与 6 个月滞纳期自动推算倒计时与参考金额。
+- **后台轻量提醒服务**：支持命令行入口 `RebuttalSidecar.exe --check-reminders`，并在 UI 中一键注册/注销免管理员权限的 Windows 每日计划任务 `RebuttalSidecar_PatentReminder`，到期时弹出 WinForms 系统气泡通知（按天去重），同时保留可选的 SMTP 邮件通知配置。
+
 ## 5. 数据结构与接口定义
 
 ### 5.1 `.rebuttal_todo.json` 数据规范
@@ -246,6 +286,19 @@ docs/manuscripts/
 | `GET`    | `/api/compile/status?manuscript=<name>`  | 查询当前编译状态、PDF 可用性、结构化错误及日志尾部           |
 | `GET`    | `/api/pdf/<kind>?manuscript=<name>`      | 流式返回 `clean.pdf` 或 `diff.pdf`（响应头 `Cache-Control: no-store`） |
 | `GET`    | `/api/events`                            | SSE 事件流：`WORKSPACE_UPDATED`、`TODO_UPDATED`、`FILES_CHANGED`、`SETTINGS_UPDATED`、`COMPILE_START`、`COMPILE_SUCCESS`、`COMPILE_ERROR` |
+
+### 5.4 专利工作台数据结构与 HTTP 接口概览
+
+- **`.patent_meta.json`**：存储专利基本字段（`title`、`patent_type`、`application_no`、`filing_date`、`grant_date`、`stage`、`fee_reduction`、`agency`、`gitea_repo`）、`figures` 次序与图注、`reference_numerals` 标号字典、`fee_payments` 缴费记录及 `custom_deadlines` 自定义截止日。
+- **`.patent_feedback.json`**：存储 `raw_batches`（模糊意见原始批）与 `items`（结构化意见条目：`id`、`source`、`category`、`original_fuzzy_note`、`action_plan`、`clarification_question`、`target_section`、`reply_draft`、`status`、`updated_at`）。
+- **核心接口**：
+  - `PUT /api/workbench`：切换顶层 `paper` / `patent` 工作台。
+  - `GET /api/patents/state`、`POST /api/patents/open|create|demo`、`PATCH|DELETE /api/patents/history`、`PUT /api/patents/meta`。
+  - `GET /api/patents/document`、`PUT /api/patents/markdown`、`POST /api/patents/export-docx`、`GET /api/patents/diff`。
+  - `GET|POST /api/patents/snapshots`、`PUT /api/patents/gitea/config`、`POST /api/patents/gitea/test|init-repo|sync`。
+  - `GET /api/patents/figures/<file>`、`POST /api/patents/figures/import`、`GET /api/patents/numerals/check`。
+  - `POST /api/patents/feedback/raw|import-docx|items`、`PATCH|DELETE /api/patents/feedback/items/<id>`、`GET /api/patents/feedback/export`。
+  - `GET /api/patents/alerts`、`PUT /api/patents/reminders/settings`、`POST /api/patents/reminders/test`。
 
 ## 6. Nuitka 转译 C 语言与原生打包方案
 
